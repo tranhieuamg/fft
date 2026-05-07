@@ -122,7 +122,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">Multi-Device Edition</span>
+    <span class="logo-tag">Pro Fidelity Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -240,7 +240,7 @@
       </div>
     </div>
     <div id="plot"></div>
-    <div class="watermark">FREQSCOPE v1.7</div>
+    <div class="watermark">FREQSCOPE v1.8</div>
   </div>
 </main>
 
@@ -252,11 +252,12 @@
 
 <script>
 // ===================================================================
-//  FreqScope v1.7
+//  FreqScope v1.8
 //  CHANGES:
-//   - ADDED: Support for enumerating and selecting specific Sound Cards
-//     (Input Mics and Output Speakers) via the MediaDevices API and 
-//     AudioContext.setSinkId().
+//   - WINDOWING FIX: Replaced flat-top Tukey window with an Asymmetric 
+//     Right-Half-Hann Window. This mirrors ARTA perfectly, tapering the
+//     IR tail smoothly to 0 across 500ms. This prevents ambient noise 
+//     from leaking into the FFT, eliminating bass jitter below 500Hz.
 // ===================================================================
 
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
@@ -299,7 +300,6 @@ const outDeviceSel  = $('output-device');
 // ───────────────────────────────────────────────────────────────────
 async function updateDeviceLists() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
-  
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
     const currentIn = inDeviceSel.value;
@@ -331,21 +331,17 @@ async function updateDeviceLists() {
   }
 }
 
-// Request permission briefly to get the real names of the soundcards
 btnRefreshDev.addEventListener('click', async () => {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    stream.getTracks().forEach(t => t.stop()); // Stop immediately
+    stream.getTracks().forEach(t => t.stop());
     await updateDeviceLists();
     setStatus('ready', 'Device list updated.');
   } catch (e) {
     setStatus('', 'Permission needed to see device names. ' + e.message);
   }
 });
-
-// Run once on load to populate defaults
 updateDeviceLists();
-
 
 // ───────────────────────────────────────────────────────────────────
 //  UI Updaters
@@ -443,24 +439,41 @@ function extractFR(ir, len, sr, fLo, fHi) {
     if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
 
-  const preSamples = Math.floor(sr * 0.005); 
-  const postSamples = Math.floor(sr * 0.500); 
+  // Asymmetric Window Parameters (Matches ARTA Right Window)
+  const preSamples = Math.floor(sr * 0.005);   // 5ms smooth fade in
+  const postFlat   = Math.floor(sr * 0.002);   // 2ms flat top at peak
+  const decaySamples = Math.floor(sr * 0.500); // 500ms smooth Hann decay
+  
   let startIdx = peakIdx - preSamples;
-  if (startIdx < 0) startIdx = 0;
+  let actualPre = preSamples;
+  if (startIdx < 0) {
+    actualPre += startIdx; 
+    startIdx = 0;
+  }
 
-  const N = nextPow2(preSamples + postSamples);
+  const N = nextPow2(actualPre + postFlat + decaySamples);
   const wRe = new Float64Array(N);
   const wIm = new Float64Array(N);
 
-  const fadeSamples = Math.floor(sr * 0.002);
   for (let i = 0; i < N; i++) {
     let val = (startIdx + i < len) ? ir[startIdx + i] : 0;
     
-    if (i < fadeSamples) {
-      val *= 0.5 * (1 - Math.cos(Math.PI * i / fadeSamples)); 
-    } else if (i > N - fadeSamples) {
-      val *= 0.5 * (1 - Math.cos(Math.PI * (N - i) / fadeSamples)); 
+    if (i < actualPre) {
+      // 1. Fade in (Rising curve)
+      val *= 0.5 * (1 - Math.cos(Math.PI * i / actualPre)); 
+    } 
+    else if (i >= actualPre && i < actualPre + postFlat) {
+      // 2. Flat top (Leaves peak completely untouched)
+    } 
+    else if (i >= actualPre + postFlat && i < actualPre + postFlat + decaySamples) {
+      // 3. Graceful tail taper (Smashes mic background noise smoothly)
+      const decayIdx = i - (actualPre + postFlat);
+      val *= 0.5 * (1 + Math.cos(Math.PI * decayIdx / decaySamples)); 
+    } 
+    else {
+      val = 0;
     }
+    
     wRe[i] = val;
   }
 
@@ -534,7 +547,7 @@ self.onmessage = function(e) {
   self.postMessage({ type:'progress', pct:20, msg:'Deconvolving...' });
   const { ir, len } = deconvolve(ref, rec);
 
-  self.postMessage({ type:'progress', pct:50, msg:'Applying ARTA 500ms gate...' });
+  self.postMessage({ type:'progress', pct:50, msg:'Applying Right-Half-Hann Asymmetric Window...' });
   const { rawFreqs, rawDb, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
 
   self.postMessage({ type:'progress', pct:80, msg:'Smoothing data...' });
@@ -721,7 +734,6 @@ async function startRecording() {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     
-    // Set Output Device (Sink ID) if supported and selected
     const selectedOutput = outDeviceSel.value;
     if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
       try { await audioCtx.setSinkId(selectedOutput); } 
@@ -734,7 +746,6 @@ async function startRecording() {
     setStatus('processing', 'Requesting microphone...');
     setProgress(20);
     
-    // Set Input Device (Mic)
     const selectedInput = inDeviceSel.value;
     const audioConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
     if (selectedInput) {
@@ -817,8 +828,6 @@ async function startRecording() {
 
   isMeasuring = false;
   btnRecord.disabled = false;
-  
-  // Re-populate devices in case the successful permission grant just happened
   updateDeviceLists();
 }
 
@@ -864,7 +873,7 @@ async function runAnalysis() {
     $('meta-pts').textContent = result.freqs.length;
 
     if (!result.freqs.length)
-      throw new Error('No frequency data extracted. Is the mic picking up the speaker?');
+      throw new Error('No frequency data extracted.');
 
     latestFreqs  = result.freqs;
     latestDb     = result.db;
