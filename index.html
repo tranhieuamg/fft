@@ -80,9 +80,6 @@
   .chart-meta span { color:var(--text); }
   #plot { flex:1; min-height:420px; border:1px solid var(--border); border-radius:4px; background:var(--surface); }
 
-  .waveform-preview { margin-top:8px; }
-  .waveform-canvas { width:100%; height:60px; background:var(--surface); border:1px solid var(--border); border-radius:4px; display:block; }
-
   .log-panel { background:var(--surface); border-top:1px solid var(--border); padding:10px 24px;
                font-family:var(--mono); font-size:11px; color:var(--text-dim);
                display:flex; align-items:center; gap:12px; min-height:38px; }
@@ -122,7 +119,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">Frequency Response Analyzer</span>
+    <span class="logo-tag">Raw Fidelity Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -160,22 +157,10 @@
     </div>
 
     <div>
-      <div class="section-label">Processing</div>
-      <div class="param-row">
-        <div class="param-label"><span>IR Gate (ms)</span><span class="param-value" id="gate-val">200 ms</span></div>
-        <input type="range" id="gate" min="20" max="500" step="10" value="200">
-      </div>
-      <div class="toggle-row">
-        <span>Smoothing (1/3 oct)</span>
-        <label class="toggle"><input type="checkbox" id="smooth-toggle" checked><span class="slider-track"></span></label>
-      </div>
+      <div class="section-label">Display</div>
       <div class="toggle-row">
         <span>Normalize 0 dB peak</span>
         <label class="toggle"><input type="checkbox" id="norm-toggle" checked><span class="slider-track"></span></label>
-      </div>
-      <div class="toggle-row">
-        <span>Show Noise Floor</span>
-        <label class="toggle"><input type="checkbox" id="noise-toggle"><span class="slider-track"></span></label>
       </div>
       <div class="param-row">
         <div class="param-label"><span>Y-axis range</span><span class="param-value" id="yrange-val">±30 dB</span></div>
@@ -192,8 +177,7 @@
     <div>
       <div class="section-label">Controls</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button class="btn-primary"   id="btn-record">🔴 RECORD</button>
-        <button class="btn-primary"   id="btn-analyze" disabled>📊 ANALYZE</button>
+        <button class="btn-primary"   id="btn-measure">&#9654; MEASURE</button>
         <button class="btn-secondary" id="btn-save"    disabled>SAVE CURVE</button>
         <button class="btn-secondary" id="btn-export"  disabled>EXPORT CSV</button>
         <button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
@@ -208,74 +192,65 @@
     </div>
 
     <div class="info-box" id="info-box">
-      Click <strong style="color:var(--accent)">RECORD</strong> to capture mic signal.<br>
-      Then <strong style="color:var(--accent)">ANALYZE</strong> to compute FR.<br>
+      Click <strong style="color:var(--accent)">MEASURE</strong> to begin.<br>
+      Microphone access required.<br>
       Use headphones to avoid feedback.
     </div>
   </aside>
 
   <div class="chart-area">
     <div class="chart-header">
-      <div class="chart-title">Frequency Response</div>
+      <div class="chart-title">Raw Frequency Response</div>
       <div class="chart-meta">
-        SR: <span id="meta-sr">—</span> &nbsp;|&nbsp;
-        FFT: <span id="meta-fft">—</span> &nbsp;|&nbsp;
-        Points: <span id="meta-pts">—</span>
+        SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
+        FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
+        Points: <span id="meta-pts">&#8212;</span>
       </div>
     </div>
     <div id="plot"></div>
-    <div class="waveform-preview">
-      <canvas class="waveform-canvas" id="waveform-canvas" width="800" height="60"></canvas>
-    </div>
-    <div class="watermark">FREQSCOPE v2.0</div>
+    <div class="watermark">FREQSCOPE ARTA-SYNC v1.5</div>
   </div>
 </main>
 
 <div class="log-panel">
   <span style="color:var(--accent);font-size:10px;flex-shrink:0;">LOG</span>
-  <span id="log-text">Ready. Click RECORD to capture a measurement.</span>
+  <span id="log-text">Ready. Smoothing disabled for stability. Click MEASURE.</span>
   <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
 </div>
 
 <script>
 // ===================================================================
-//  FreqScope v2.0 – Two‑step workflow (Record → Analyze)
-//  Changes from v1.x:
-//   - Separate Record and Analyze buttons, no hangs.
-//   - Stores recorded PCM, shows waveform preview.
-//   - IR gating control (ARTA‑style windowing).
-//   - Noise floor estimation and display toggle.
+//  FreqScope v1.5 (ARTA Parity Edition)
+//  CHANGES:
+//   - REMOVED: Smoothing (prevents hanging).
+//   - FIXED: Impulse Response Windowing. Replaced destructive full-length 
+//     Hann window with a precise 22ms Tukey window (2ms pre, 20ms post) 
+//     to match ARTA's gating for nearfield/IEM measurements.
 // ===================================================================
 
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0, audioCtx = null;
-let savedCurves = [], latestFreqs = null, latestDb = null, latestSmooth = null, latestNoiseFloor = null;
-let isRecording = false, isAnalyzing = false, measureCount = 1;
-let recordedAudio = null;   // Float32Array of microphone capture
-let recordedSampleRate = null;
+let savedCurves = [], latestFreqs = null, latestDb = null;
+let isMeasuring = false, measureCount = 1;
 
 const $ = id => document.getElementById(id);
-const btnRecord  = $('btn-record');
-const btnAnalyze = $('btn-analyze');
-const btnSave    = $('btn-save');
-const btnExport  = $('btn-export');
-const btnClear   = $('btn-clear');
-const statusDot  = $('status-dot');
-const statusText = $('status-text');
-const logText    = $('log-text');
-const progressBar= $('progress-bar');
-const infoBox    = $('info-box');
-const durSlider  = $('duration');
-const volSlider  = $('volume');
-const floSlider  = $('freq-lo');
-const fhiSlider  = $('freq-hi');
-const ySlider    = $('yrange');
-const gateSlider = $('gate');
-const smoothChk  = $('smooth-toggle');
-const normChk    = $('norm-toggle');
-const noiseChk   = $('noise-toggle');
-const sweepSel   = $('sweep-type');
-const nameInput  = $('curve-name');
+const btnMeasure  = $('btn-measure');
+const btnSave     = $('btn-save');
+const btnExport   = $('btn-export');
+const btnClear    = $('btn-clear');
+const statusDot   = $('status-dot');
+const statusText  = $('status-text');
+const logText     = $('log-text');
+const progressBar = $('progress-bar');
+const infoBox     = $('info-box');
+const durSlider   = $('duration');
+const volSlider   = $('volume');
+const floSlider   = $('freq-lo');
+const fhiSlider   = $('freq-hi');
+const ySlider     = $('yrange');
+const normChk     = $('norm-toggle');
+const sweepSel    = $('sweep-type');
+const nameInput   = $('curve-name');
 
 function updateDisplays() {
   $('dur-val').textContent    = parseFloat(durSlider.value).toFixed(1) + ' s';
@@ -283,10 +258,9 @@ function updateDisplays() {
   $('flo-val').textContent    = floSlider.value + ' Hz';
   $('fhi-val').textContent    = fhiSlider.value + ' Hz';
   $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
-  $('gate-val').textContent   = gateSlider.value + ' ms';
 }
-[durSlider,volSlider,floSlider,fhiSlider,ySlider,gateSlider].forEach(s => s.addEventListener('input', updateDisplays));
-[smoothChk,normChk,noiseChk,ySlider,gateSlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
+[durSlider,volSlider,floSlider,fhiSlider,ySlider].forEach(s => s.addEventListener('input', updateDisplays));
+[normChk,ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
 updateDisplays();
 
 function setStatus(state, msg) {
@@ -297,7 +271,7 @@ function setStatus(state, msg) {
 function setProgress(pct) { progressBar.style.width = Math.min(100, Math.max(0, pct)) + '%'; }
 
 // ───────────────────────────────────────────────────────────────────
-//  WEB WORKER (unchanged core, but now accepts gateMs parameter)
+//  WEB WORKER SOURCE (MATH ONLY, NO SMOOTHING)
 // ───────────────────────────────────────────────────────────────────
 const WORKER_SRC = `
 'use strict';
@@ -334,12 +308,6 @@ function fft(re, im) {
 
 function nextPow2(n) { let p = 1; while (p < n) p <<= 1; return p; }
 
-function hann(n) {
-  const w = new Float64Array(n);
-  for (let i = 0; i < n; i++) w[i] = 0.5*(1-Math.cos(2*Math.PI*i/(n-1)));
-  return w;
-}
-
 function deconvolve(ref, rec) {
   const len = nextPow2(Math.max(ref.length, rec.length) * 2);
   const rRe = new Float64Array(len), rIm = new Float64Array(len);
@@ -369,7 +337,8 @@ function deconvolve(ref, rec) {
   return { ir, len };
 }
 
-function extractFR(ir, len, sr, fLo, fHi, gateMs) {
+function extractFR(ir, len, sr, fLo, fHi) {
+  // 1. Find IR peak
   const half = Math.floor(len / 2);
   let peakIdx = 0, peakVal = 0;
   for (let i = 0; i < half; i++) {
@@ -377,19 +346,30 @@ function extractFR(ir, len, sr, fLo, fHi, gateMs) {
     if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
 
-  // Pre-gate: 2 ms before peak
-  const preGate = Math.floor(sr * 0.002);
-  const start = Math.max(0, peakIdx - preGate);
+  // 2. ARTA-Style Gating (2ms pre, 20ms post)
+  const preSamples = Math.floor(sr * 0.002);
+  const postSamples = Math.floor(sr * 0.020);
+  let startIdx = peakIdx - preSamples;
+  if (startIdx < 0) startIdx = 0;
 
-  // ARTA‑style gating: trim IR after peak + gateMs
-  const gateSamples = Math.floor(sr * (gateMs / 1000));
-  const end = Math.min(len, peakIdx + gateSamples);
-  const N = end - start;
-  if (N < 16) return { freqs:[], db:[], peakIdx };
+  // 3. FFT Size calculation
+  const N = nextPow2(preSamples + postSamples);
+  const wRe = new Float64Array(N);
+  const wIm = new Float64Array(N);
 
-  const win = hann(N);
-  const wRe = new Float64Array(N), wIm = new Float64Array(N);
-  for (let i = 0; i < N; i++) wRe[i] = ir[start + i] * win[i];
+  // 4. Tukey Window (Flat top, 1ms fade on edges to prevent clicks)
+  const fadeSamples = Math.floor(sr * 0.001); 
+  for (let i = 0; i < N; i++) {
+    let val = (startIdx + i < half) ? ir[startIdx + i] : 0;
+    
+    if (i < fadeSamples) {
+      val *= 0.5 * (1 - Math.cos(Math.PI * i / fadeSamples)); // Fade in
+    } else if (i > N - fadeSamples) {
+      val *= 0.5 * (1 - Math.cos(Math.PI * (N - i) / fadeSamples)); // Fade out
+    }
+    wRe[i] = val;
+  }
+
   fft(wRe, wIm);
 
   const freqs = [], db = [], binHz = sr / N;
@@ -397,41 +377,24 @@ function extractFR(ir, len, sr, fLo, fHi, gateMs) {
     const f = i * binHz;
     if (f < fLo || f > fHi) continue;
     const mag = Math.sqrt(wRe[i]*wRe[i] + wIm[i]*wIm[i]);
-    if (mag > 1e-30) { freqs.push(f); db.push(20 * Math.log10(mag)); }
-  }
-  return { freqs, db, peakIdx };
-}
-
-function smoothOctave(freqs, db, fraction) {
-  const out = new Float64Array(db.length);
-  for (let i = 0; i < freqs.length; i++) {
-    const fc = freqs[i];
-    const lo = fc * Math.pow(2, -0.5/fraction);
-    const hi = fc * Math.pow(2,  0.5/fraction);
-    let sum = 0, wsum = 0;
-    for (let j = 0; j < freqs.length; j++) {
-      if (freqs[j] < lo || freqs[j] > hi) continue;
-      const d = Math.log2(freqs[j]/fc) * fraction;
-      const w = Math.exp(-0.5*d*d);
-      sum += db[j]*w; wsum += w;
+    if (mag > 1e-30) { 
+      freqs.push(f); 
+      db.push(20 * Math.log10(mag)); 
     }
-    out[i] = wsum > 0 ? sum/wsum : db[i];
   }
-  return Array.from(out);
+  return { freqs, db, peakIdx, gateSize: N };
 }
 
 self.onmessage = function(e) {
-  const { ref, rec, sr, fLo, fHi, gateMs } = e.data;
-  self.postMessage({ type:'progress', pct:74, msg:'Deconvolving impulse response...' });
+  const { ref, rec, sr, fLo, fHi } = e.data;
+
+  self.postMessage({ type:'progress', pct:30, msg:'Deconvolving impulse response...' });
   const { ir, len } = deconvolve(ref, rec);
 
-  self.postMessage({ type:'progress', pct:88, msg:'Extracting frequency response...' });
-  const { freqs, db, peakIdx } = extractFR(ir, len, sr, fLo, fHi, gateMs);
+  self.postMessage({ type:'progress', pct:70, msg:'Applying ARTA-style gate & extracting...' });
+  const { freqs, db, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
 
-  self.postMessage({ type:'progress', pct:95, msg:'Smoothing...' });
-  const dbSmooth = smoothOctave(freqs, db, 3);
-
-  self.postMessage({ type:'done', freqs, db, dbSmooth, peakIdx, fftLen: len });
+  self.postMessage({ type:'done', freqs, db, peakIdx, fftLen: gateSize });
 };
 `;
 
@@ -471,20 +434,14 @@ function generatePinkNoise(sr, dur) {
   return buf;
 }
 
-// ───────────────────────────────────────────────────────────────────
-//  Recording – MediaRecorder (unchanged)
-// ───────────────────────────────────────────────────────────────────
 function recordAudio(stream, durationSecs, targetSR) {
   return new Promise((resolve, reject) => {
     const mime = ['audio/webm;codecs=pcm', 'audio/webm', 'audio/ogg', '']
       .find(m => !m || MediaRecorder.isTypeSupported(m));
 
     let recorder;
-    try {
-      recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-    } catch(e) {
-      return reject(new Error('MediaRecorder not available: ' + e.message));
-    }
+    try { recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); } 
+    catch(e) { return reject(new Error('MediaRecorder not available: ' + e.message)); }
 
     const chunks = [];
     recorder.ondataavailable = ev => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
@@ -496,9 +453,8 @@ function recordAudio(stream, durationSecs, targetSR) {
 
         let audioBuf;
         const decCtx = new AudioContext({ sampleRate: targetSR });
-        try {
-          audioBuf = await decCtx.decodeAudioData(arr);
-        } catch(_) {
+        try { audioBuf = await decCtx.decodeAudioData(arr); } 
+        catch(_) {
           await decCtx.close();
           const decCtx2 = new AudioContext();
           audioBuf = await decCtx2.decodeAudioData(arr.slice(0));
@@ -520,7 +476,7 @@ function recordAudio(stream, durationSecs, targetSR) {
         }
 
         if (pcm.length < targetSR * 0.3)
-          return reject(new Error('Recorded < 300 ms of audio. Check the mic is not muted.'));
+          return reject(new Error('Recorded < 300 ms of audio. Check the mic.'));
 
         resolve(new Float32Array(pcm));
       } catch(e) {
@@ -530,54 +486,8 @@ function recordAudio(stream, durationSecs, targetSR) {
 
     recorder.onerror = e => reject(new Error('MediaRecorder error: ' + (e.error || e)));
     recorder.start(250);
-
-    setTimeout(() => {
-      if (recorder.state === 'recording') recorder.stop();
-    }, durationSecs * 1000);
+    setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, durationSecs * 1000);
   });
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  Waveform preview (draw on canvas)
-// ───────────────────────────────────────────────────────────────────
-function drawWaveform(samples, sr) {
-  const canvas = $('waveform-canvas');
-  const ctx = canvas.getContext('2d');
-  const w = canvas.width = canvas.clientWidth;
-  const h = canvas.height = 60;
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = '#0d1015';
-  ctx.fillRect(0, 0, w, h);
-
-  if (!samples || samples.length === 0) return;
-
-  const step = Math.max(1, Math.floor(samples.length / w));
-  ctx.beginPath();
-  ctx.strokeStyle = '#00e5ff';
-  ctx.lineWidth = 1;
-
-  const mid = h / 2;
-  ctx.moveTo(0, mid);
-
-  for (let i = 0; i < w; i++) {
-    const idx = i * step;
-    if (idx >= samples.length) break;
-    let max = 0;
-    for (let j = 0; j < step && (idx + j) < samples.length; j++) {
-      const val = Math.abs(samples[idx + j]);
-      if (val > max) max = val;
-    }
-    const y = mid - (max * mid * 0.9);
-    ctx.lineTo(i, y);
-  }
-  ctx.stroke();
-
-  // Time axis label
-  ctx.fillStyle = '#5a6a7a';
-  ctx.font = '9px "Share Tech Mono"';
-  const dur = (samples.length / sr).toFixed(2) + 's';
-  ctx.fillText(dur, w - 50, h - 4);
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -610,17 +520,19 @@ function makePlotLayout(yRange=30) {
   };
 }
 
-function normalize(db) { const p = Math.max(...db); return db.map(v => v - p); }
+function normalize(db) { 
+  let maxVal = -Infinity;
+  for (let i = 0; i < db.length; i++) if (db[i] > maxVal) maxVal = db[i];
+  return db.map(v => v - maxVal); 
+}
 
 function replot() {
   const yRange = parseInt(ySlider.value);
-  const useSmooth = smoothChk.checked;
   const useNorm   = normChk.checked;
-  const showNoise = noiseChk.checked;
   const traces = [];
 
   savedCurves.forEach(c => {
-    let db = useSmooth ? c.dbSmooth : c.rawDb;
+    let db = c.rawDb;
     if (useNorm) db = normalize(db);
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
@@ -629,38 +541,23 @@ function replot() {
 
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
-    let db = useSmooth ? latestSmooth : latestDb;
+    let db = latestDb;
     if (useNorm) db = normalize(db);
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
   }
 
-  // Noise floor (horizontal line if requested and available)
-  if (showNoise && latestNoiseFloor !== null && latestFreqs) {
-    const nfDb = latestNoiseFloor;
-    traces.push({
-      x:[latestFreqs[0], latestFreqs[latestFreqs.length-1]],
-      y:[nfDb, nfDb],
-      mode:'lines',
-      name:'Noise Floor',
-      line:{ color:'#ff3d5a', width:1, dash:'dot' },
-      hoverinfo:'skip'
-    });
-  }
-
   Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  RECORD (step 1)
+//  MAIN PIPELINE
 // ───────────────────────────────────────────────────────────────────
-async function runRecording() {
-  if (isRecording) return;
-  isRecording = true;
-  btnRecord.disabled = true;
-  btnAnalyze.disabled = true;
-  recordedAudio = null;
+async function runMeasurement() {
+  if (isMeasuring) return;
+  isMeasuring = true;
+  btnMeasure.disabled = true; btnSave.disabled = true; btnExport.disabled = true;
 
   try {
     setStatus('processing', 'Initializing audio...');
@@ -669,7 +566,6 @@ async function runRecording() {
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const sr = audioCtx.sampleRate;
-    recordedSampleRate = sr;
     $('meta-sr').textContent = (sr/1000).toFixed(1) + ' kHz';
 
     setStatus('processing', 'Requesting microphone...');
@@ -680,7 +576,7 @@ async function runRecording() {
         audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
       });
     } catch(e) {
-      throw new Error('Mic access denied. Check browser permissions.');
+      throw new Error('Mic access denied. Allow microphone, then refresh.');
     }
 
     const duration  = parseFloat(durSlider.value);
@@ -696,20 +592,19 @@ async function runRecording() {
       : generatePinkNoise(sr, duration);
     for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume;
 
-    const preSec = 0.5, postSec = 1.0;
-    const totalRecSecs = preSec + duration + postSec + 1.0;
+    const preSec  = 0.5, postSec = 1.0;
+    const preN    = Math.floor(sr * preSec);
+    const totalN  = preN + refSamples.length + Math.floor(sr * postSec);
+    const playBuf = audioCtx.createBuffer(1, totalN, sr);
+    const playData= playBuf.getChannelData(0);
+    for (let i = 0; i < refSamples.length; i++) playData[preN + i] = refSamples[i];
 
+    const totalRecSecs = preSec + duration + postSec + 1.0; 
     setStatus('recording', 'Starting recorder...');
     setProgress(20);
 
     const recordPromise = recordAudio(stream, totalRecSecs, sr);
     await new Promise(r => setTimeout(r, 200));
-
-    // Play the sweep
-    const playBuf = audioCtx.createBuffer(1, Math.floor(sr * (preSec + duration + postSec)), sr);
-    const playData = playBuf.getChannelData(0);
-    const preN = Math.floor(sr * preSec);
-    for (let i = 0; i < refSamples.length; i++) playData[preN + i] = refSamples[i];
 
     const gain = audioCtx.createGain();
     gain.gain.value = 1.0;
@@ -731,63 +626,8 @@ async function runRecording() {
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
 
-    recordedAudio = recRaw;
-    drawWaveform(recRaw, sr);
-
-    setStatus('ready', 'Captured ' + recRaw.length + ' samples. Ready for analysis.');
-    setProgress(100);
-    infoBox.innerHTML = 'Recording complete.<br>Click <strong style="color:var(--accent)">ANALYZE</strong> to compute frequency response.';
-    btnAnalyze.disabled = false;
-    setTimeout(() => setProgress(0), 1500);
-
-  } catch(err) {
-    console.error(err);
-    setStatus('', 'Error: ' + err.message);
-    infoBox.innerHTML = '<span style="color:var(--red)">Error:</span> ' + err.message;
-    setProgress(0);
-    btnAnalyze.disabled = true;
-  }
-
-  isRecording = false;
-  btnRecord.disabled = false;
-}
-
-// ───────────────────────────────────────────────────────────────────
-//  ANALYZE (step 2)
-// ───────────────────────────────────────────────────────────────────
-async function runAnalysis() {
-  if (!recordedAudio || isAnalyzing) return;
-  isAnalyzing = true;
-  btnAnalyze.disabled = true;
-  btnSave.disabled = true;
-  btnExport.disabled = true;
-
-  try {
-    const sr = recordedSampleRate;
-    const duration  = parseFloat(durSlider.value);
-    const volume    = parseInt(volSlider.value) / 100;
-    const fLo       = parseInt(floSlider.value);
-    const fHi       = parseInt(fhiSlider.value);
-    const sweepType = sweepSel.value;
-    const gateMs    = parseInt(gateSlider.value);
-
-    // Regenerate reference sweep (same as recorded)
-    const refSamples = sweepType === 'logsweep'
-      ? generateLogSweep(sr, duration, fLo, fHi)
-      : generatePinkNoise(sr, duration);
-    for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume;
-
-    // Estimate noise floor from first 0.3s of recording (before sweep starts)
-    const noiseLen = Math.floor(sr * 0.3);
-    const noiseSlice = recordedAudio.slice(0, noiseLen);
-    let rms = 0;
-    for (let i = 0; i < noiseSlice.length; i++) rms += noiseSlice[i] * noiseSlice[i];
-    rms = Math.sqrt(rms / noiseSlice.length);
-    const noiseFloorDb = rms > 1e-30 ? 20 * Math.log10(rms) : -120;
-    latestNoiseFloor = noiseFloorDb;
-
-    setStatus('processing', 'Sending to worker...');
-    setProgress(70);
+    setStatus('processing', 'Captured. Processing...');
+    setProgress(72);
 
     const result = await new Promise((resolve, reject) => {
       const worker = makeWorker();
@@ -799,9 +639,9 @@ async function runAnalysis() {
       worker.onerror = e => { worker.terminate(); reject(new Error('Worker: ' + e.message)); };
 
       const refBuf = refSamples.buffer.slice(0);
-      const recBuf = recordedAudio.buffer.slice(0);
+      const recBuf = recRaw.buffer.slice(0);
       worker.postMessage(
-        { ref: new Float32Array(refBuf), rec: new Float32Array(recBuf), sr, fLo, fHi, gateMs },
+        { ref: new Float32Array(refBuf), rec: new Float32Array(recBuf), sr, fLo, fHi },
         [refBuf, recBuf]
       );
     });
@@ -810,18 +650,17 @@ async function runAnalysis() {
     $('meta-pts').textContent = result.freqs.length;
 
     if (!result.freqs.length)
-      throw new Error('No frequency data extracted. Try a longer IR gate.');
+      throw new Error('No frequency data extracted.');
 
     latestFreqs  = result.freqs;
     latestDb     = result.db;
-    latestSmooth = result.dbSmooth;
 
     setProgress(100);
     replot();
-    setStatus('ready', 'Analysis done. ' + result.freqs.length + ' pts.');
-    infoBox.innerHTML = 'Analysis complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay.';
-    btnSave.disabled = false;
-    btnExport.disabled = false;
+    const latMs = (result.peakIdx / sr * 1000).toFixed(1);
+    setStatus('ready', 'Done! IR peak at ' + latMs + ' ms');
+    infoBox.innerHTML = 'Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay.';
+    btnSave.disabled = false; btnExport.disabled = false;
     setTimeout(() => setProgress(0), 1500);
 
   } catch(err) {
@@ -831,8 +670,8 @@ async function runAnalysis() {
     setProgress(0);
   }
 
-  isAnalyzing = false;
-  btnAnalyze.disabled = false;
+  isMeasuring = false;
+  btnMeasure.disabled = false;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -842,8 +681,8 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, dbSmooth:latestSmooth, color, noiseFloor:latestNoiseFloor });
-  latestFreqs = latestDb = latestSmooth = latestNoiseFloor = null;
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, color });
+  latestFreqs = latestDb = null;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
   renderSavedList(); replot();
@@ -868,15 +707,13 @@ function renderSavedList() {
 }
 
 function clearAll() {
-  savedCurves = []; latestFreqs = latestDb = latestSmooth = latestNoiseFloor = null;
-  recordedAudio = null; recordedSampleRate = null;
+  savedCurves = []; latestFreqs = latestDb = null;
   colorIdx = 0; measureCount = 1;
   nameInput.value = 'Measurement 1';
-  btnSave.disabled = btnExport.disabled = btnAnalyze.disabled = true;
-  drawWaveform(null);
+  btnSave.disabled = btnExport.disabled = true;
   renderSavedList(); initPlot();
   ['meta-sr','meta-fft','meta-pts'].forEach(id => $(id).textContent = '\u2014');
-  setStatus('', 'Cleared. Ready for new recording.');
+  setStatus('', 'Cleared. Ready for new measurements.');
 }
 
 function exportCSV() {
@@ -896,14 +733,13 @@ function exportCSV() {
   a.click();
 }
 
-btnRecord.addEventListener('click', runRecording);
-btnAnalyze.addEventListener('click', runAnalysis);
+btnMeasure.addEventListener('click', runMeasurement);
 btnSave.addEventListener('click', saveCurve);
 btnExport.addEventListener('click', exportCSV);
 btnClear.addEventListener('click', clearAll);
 
 initPlot();
-setStatus('', 'Ready. Click RECORD to capture a measurement.');
+setStatus('', 'Ready. Smoothing disabled. Click MEASURE.');
 </script>
 </body>
 </html>
