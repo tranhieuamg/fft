@@ -708,101 +708,127 @@ function generatePinkNoise(sr, duration) {
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Cross-correlation for latency alignment
-//  Returns the sample lag (recorded signal leads reference by lag)
+//  Cross-correlation to find the TRUE IR peak position
+//  in the recording (replaces naive lag estimate).
+//  Returns the sample index in `rec` where the IR peak sits.
 // ═══════════════════════════════════════════════════════════════
-function findLatencyLag(ref, rec, maxLagSamples) {
-  // Use only first 4096 samples for speed
-  const win  = Math.min(4096, ref.length, rec.length);
-  const N    = nextPow2(win * 2);
-  const aRe  = new Float64Array(N);
-  const aIm  = new Float64Array(N);
-  const bRe  = new Float64Array(N);
-  const bIm  = new Float64Array(N);
-  for (let i = 0; i < win; i++) { aRe[i] = ref[i]; bRe[i] = rec[i]; }
-  fftIterative(aRe, aIm);
-  fftIterative(bRe, bIm);
-  // Cross-correlation: C = conj(A) * B
-  const cRe = new Float64Array(N);
-  const cIm = new Float64Array(N);
-  for (let i = 0; i < N; i++) {
-    cRe[i] =  aRe[i]*bRe[i] + aIm[i]*bIm[i];
-    cIm[i] = -aIm[i]*bRe[i] + aRe[i]*bIm[i];
+function findIRPeakIndex(recSignal) {
+  // The impulse response peak is simply the sample of maximum absolute value.
+  // After deconvolution the IR is in the time domain — we just find its peak.
+  let peakIdx = 0, peakVal = 0;
+  for (let i = 0; i < recSignal.length; i++) {
+    const a = Math.abs(recSignal[i]);
+    if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
-  // IFFT (conjugate, forward FFT, conjugate)
-  for (let i = 0; i < N; i++) cIm[i] = -cIm[i];
-  fftIterative(cRe, cIm);
-  for (let i = 0; i < N; i++) { cRe[i] /= N; cIm[i] = -cIm[i] / N; }
-
-  // Find peak within ±maxLag
-  const limit = Math.min(maxLagSamples, Math.floor(N / 2));
-  let bestVal = -Infinity, bestLag = 0;
-  for (let i = 0; i < limit; i++) {
-    if (cRe[i] > bestVal) { bestVal = cRe[i]; bestLag = i; }
-  }
-  for (let i = N - limit; i < N; i++) {
-    if (cRe[i] > bestVal) { bestVal = cRe[i]; bestLag = i - N; }
-  }
-  return bestLag; // positive = rec is delayed by `lag` samples vs ref
+  return peakIdx;
 }
 
 // ═══════════════════════════════════════════════════════════════
 //  Deconvolution: H(f) = Rec(f) / Ref(f)
+//  Returns the full impulse response as a real-valued Float64Array
+//  (magnitude of IFFT).  We keep it in the time domain so the
+//  caller can gate it properly before the final FFT.
 // ═══════════════════════════════════════════════════════════════
 function computeImpulseResponse(refSignal, recSignal) {
+  // BUG FIX #1: use the full recorded length (not a short trimmed window)
+  // so the IR has the same resolution as ARTA.
   const len = nextPow2(Math.max(refSignal.length, recSignal.length) * 2);
+
   const refRe = new Float64Array(len);
   const refIm = new Float64Array(len);
   const recRe = new Float64Array(len);
   const recIm = new Float64Array(len);
   for (let i = 0; i < refSignal.length; i++) refRe[i] = refSignal[i];
   for (let i = 0; i < recSignal.length; i++) recRe[i] = recSignal[i];
+
   fftIterative(refRe, refIm);
   fftIterative(recRe, recIm);
 
-  // Wiener deconvolution with small noise floor regularization
-  const irRe  = new Float64Array(len);
-  const irIm  = new Float64Array(len);
-  // Compute max power of reference for relative regularization
+  // Wiener deconvolution with relative noise floor regularisation
+  const irRe = new Float64Array(len);
+  const irIm = new Float64Array(len);
   let maxPow = 0;
   for (let i = 0; i < len; i++) {
     const p = refRe[i]*refRe[i] + refIm[i]*refIm[i];
     if (p > maxPow) maxPow = p;
   }
-  const eps = maxPow * 1e-6 + 1e-20;
+  const eps = maxPow * 1e-6 + 1e-30;
   for (let i = 0; i < len; i++) {
     const denom = refRe[i]*refRe[i] + refIm[i]*refIm[i] + eps;
     irRe[i] = (recRe[i]*refRe[i] + recIm[i]*refIm[i]) / denom;
     irIm[i] = (recIm[i]*refRe[i] - recRe[i]*refIm[i]) / denom;
   }
-  return { irRe, irIm, len };
+
+  // IFFT to get time-domain IR
+  // IFFT = conjugate → forward FFT → conjugate → divide by N
+  for (let i = 0; i < len; i++) irIm[i] = -irIm[i];
+  fftIterative(irRe, irIm);
+  const ir = new Float64Array(len);
+  for (let i = 0; i < len; i++) {
+    irRe[i] =  irRe[i] / len;
+    irIm[i] = -irIm[i] / len;
+    ir[i]   = irRe[i]; // real part only
+  }
+
+  return { ir, len };
 }
 
 // ═══════════════════════════════════════════════════════════════
-//  Extract frequency response from IR
+//  Extract frequency response from the time-domain IR
+//
+//  ROOT CAUSE FIXES applied here:
+//
+//  BUG #1 (wrong dB shape / 68 dB std dev):
+//    Old code FFT'd irRe/irIm directly after deconvolution — those
+//    are still in the frequency domain, so FFT'ing them again gives
+//    nonsense.  Fix: IFFT first (done in computeImpulseResponse),
+//    then FFT the time-domain IR.
+//
+//  BUG #2 (high-freq rolloff / noise floor at >5 kHz):
+//    Old code truncated the IR to 256 ms before the peak had even
+//    been located.  Most of that 256 ms window was pre-peak noise,
+//    so the sweep energy was barely represented.
+//    Fix: gate the IR starting 2 ms BEFORE the true peak and use
+//    the full remaining length for maximum frequency resolution.
+//
+//  BUG #3 (measurement-to-measurement inconsistency):
+//    The alignment relied solely on a cross-correlation over the
+//    first 4096 samples, which often missed the true peak when
+//    system latency was >85 ms.  Fix: find the absolute peak of
+//    the deconvolved IR (unambiguous) and gate from there.
 // ═══════════════════════════════════════════════════════════════
-function extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi) {
-  // Use up to 256 ms of IR (captures enough late decay without room noise)
-  const irWindow = Math.min(len, nextPow2(Math.floor(sr * 0.256)));
-  const win  = hannWindow(irWindow);
-  const wRe  = new Float64Array(irWindow);
-  const wIm  = new Float64Array(irWindow);
-  for (let i = 0; i < irWindow; i++) {
-    wRe[i] = irRe[i] * win[i];
-    wIm[i] = irIm[i] * win[i];
+function extractFrequencyResponse(ir, len, sr, fLo, fHi) {
+  // BUG FIX #2 & #3: find true IR peak, gate 2 ms before it
+  const preGate = Math.floor(sr * 0.002); // 2 ms
+  let peakIdx = 0, peakVal = 0;
+  // Search only the first half of the buffer (second half is circular wrap)
+  for (let i = 0; i < len / 2; i++) {
+    const a = Math.abs(ir[i]);
+    if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
+  const gateStart = Math.max(0, peakIdx - preGate);
+  const irGated   = ir.subarray(gateStart); // everything from gate start to end
+  const N         = irGated.length;
+
+  // Apply Hann window to the full gated IR
+  const win = hannWindow(N);
+  const wRe = new Float64Array(N);
+  const wIm = new Float64Array(N);
+  for (let i = 0; i < N; i++) wRe[i] = irGated[i] * win[i];
+
   fftIterative(wRe, wIm);
 
   const freqs = [];
   const db    = [];
-  const binHz = sr / irWindow;
-  for (let i = 1; i < irWindow / 2; i++) {
+  const binHz = sr / N;
+  for (let i = 1; i < N / 2; i++) {
     const f = i * binHz;
     if (f < fLo || f > fHi) continue;
     const mag = Math.sqrt(wRe[i]*wRe[i] + wIm[i]*wIm[i]);
-    if (mag > 0) { freqs.push(f); db.push(20 * Math.log10(mag)); }
+    if (mag > 1e-30) { freqs.push(f); db.push(20 * Math.log10(mag)); }
   }
-  return { freqs, db };
+
+  return { freqs, db, peakIdx, gateStart };
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1010,10 +1036,9 @@ async function runMeasurement() {
 
     // 5. Build playback buffer with pre/post silence
     const silencePre  = 0.5;   // 500 ms pre-silence for recorder to stabilize
-    const silencePost = 0.8;   // 800 ms post-silence to capture tail
+    const silencePost = 1.0;   // 1s post-silence to capture IR tail
     const preSamples  = Math.floor(sr * silencePre);
-    const postSamples = Math.floor(sr * silencePost);
-    const totalPlaySamples = preSamples + refSamples.length + postSamples;
+    const totalPlaySamples = preSamples + refSamples.length + Math.floor(sr * silencePost);
 
     const playBuffer = audioCtx.createBuffer(1, totalPlaySamples, sr);
     const playData   = playBuffer.getChannelData(0);
@@ -1052,35 +1077,20 @@ async function runMeasurement() {
     clearInterval(progressInterval);
     stream.getTracks().forEach(t => t.stop());
 
-    setStatus('processing', `Captured ${recRaw.length} samples (${(recRaw.length/sr).toFixed(2)}s). Aligning…`);
+    setStatus('processing', `Captured ${recRaw.length} samples (${(recRaw.length/sr).toFixed(2)}s). Deconvolving…`);
     setProgress(72);
 
-    // 9. Cross-correlation alignment
-    //    Find where the sweep appears in the recording relative to the reference
-    const maxLag = Math.floor(sr * 1.0); // search up to 1s of lag
-    const lag = findLatencyLag(refSamples, recRaw, maxLag);
-    // lag > 0 means recording is delayed: shift rec back by lag samples
-    // lag < 0 means recording started early: pad rec from front
+    // 9. Deconvolve — no pre-alignment needed; the IR peak finder handles latency
+    //    Pass the full raw recording and the reference sweep.
+    //    The deconvolution produces a time-domain IR; the peak occurs at the
+    //    position corresponding to the system latency.
+    const { ir, len } = computeImpulseResponse(refSamples, recRaw);
+    document.getElementById('meta-fft').textContent = len;
+    setProgress(84);
 
-    let recAligned;
-    const alignedLen = refSamples.length + postSamples;
-    recAligned = new Float32Array(alignedLen);
-
-    const recStart = Math.max(0, lag);
-    const copyLen  = Math.min(alignedLen, recRaw.length - recStart);
-    if (copyLen > 0) recAligned.set(recRaw.subarray(recStart, recStart + copyLen));
-
-    setStatus('processing', `Lag: ${lag} samples (${(lag/sr*1000).toFixed(1)} ms). Deconvolving…`);
-    setProgress(80);
-    document.getElementById('meta-fft').textContent = nextPow2(alignedLen * 2);
-
-    // 10. Deconvolve
-    const { irRe, irIm, len } = computeImpulseResponse(refSamples, recAligned);
-    setProgress(88);
-
-    // 11. Extract FR
-    setStatus('processing', 'Computing frequency response…');
-    const { freqs, db } = extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi);
+    // 10. Extract FR — gates at true IR peak (fixes all three shape bugs)
+    setStatus('processing', 'Gating IR & computing frequency response…');
+    const { freqs, db, peakIdx, gateStart } = extractFrequencyResponse(ir, len, sr, fLo, fHi);
     document.getElementById('meta-pts').textContent = freqs.length;
     setProgress(96);
 
@@ -1091,7 +1101,8 @@ async function runMeasurement() {
 
     replot();
     setProgress(100);
-    setStatus('ready', `Done! ${freqs.length} points · lag ${(lag/sr*1000).toFixed(1)} ms`);
+    const latencyMs = (peakIdx / sr * 1000).toFixed(1);
+    setStatus('ready', `Done! ${freqs.length} points · IR peak at ${latencyMs} ms`);
     infoBox.innerHTML = `Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay.<br>Toggle smoothing / normalization above.`;
     btnSave.disabled = false;
     btnExport.disabled = false;
