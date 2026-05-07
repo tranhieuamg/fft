@@ -49,7 +49,7 @@
     border-radius:50%; background:var(--accent); box-shadow:0 0 6px var(--accent); cursor:pointer; }
   select { width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text);
            font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px;
-           outline:none; cursor:pointer; appearance:none; }
+           outline:none; cursor:pointer; appearance:none; text-overflow:ellipsis; }
   select:focus { border-color:var(--accent); }
 
   .btn-primary { width:100%; padding:13px; background:transparent; border:1px solid var(--accent);
@@ -61,6 +61,9 @@
   .btn-primary:active { transform:scale(0.98); }
   .btn-primary:disabled { border-color:var(--border); color:var(--text-dim); cursor:not-allowed; }
   .btn-primary:disabled::before { display:none; }
+  
+  .btn-analyze { border-color: var(--green); color: var(--green); }
+  .btn-analyze::before { background: var(--green); }
 
   .btn-secondary { width:100%; padding:10px; background:transparent; border:1px solid var(--border);
     color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:2px;
@@ -119,7 +122,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">Raw Fidelity Edition</span>
+    <span class="logo-tag">Multi-Device Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -129,6 +132,22 @@
 
 <main>
   <aside class="sidebar">
+
+    <div>
+      <div class="section-label">Hardware Devices</div>
+      <div class="param-row">
+        <div class="param-label">Input (Mic)</div>
+        <select id="input-device"><option value="">System Default</option></select>
+      </div>
+      <div class="param-row">
+        <div class="param-label">Output (Earphones)</div>
+        <select id="output-device"><option value="">System Default</option></select>
+      </div>
+      <button class="btn-secondary" id="btn-refresh-dev" style="margin-top:4px; padding:8px 10px; font-size:10px;">
+        &#8635; Refresh / Load Device Names
+      </button>
+    </div>
+
     <div>
       <div class="section-label">Signal</div>
       <div class="param-row">
@@ -157,8 +176,20 @@
     </div>
 
     <div>
-      <div class="section-label">Display</div>
-      <div class="toggle-row">
+      <div class="section-label">Processing</div>
+      <div class="param-row">
+        <div class="param-label">
+            <span>Smoothing</span>
+            <span style="font-size:9px;color:var(--text-dim);text-transform:none;">(Click Analyze)</span>
+        </div>
+        <select id="smooth-val">
+          <option value="3">1/3 Octave</option>
+          <option value="6" selected>1/6 Octave</option>
+          <option value="12">1/12 Octave</option>
+          <option value="0">None (Raw)</option>
+        </select>
+      </div>
+      <div class="toggle-row" style="margin-top:16px;">
         <span>Normalize 0 dB peak</span>
         <label class="toggle"><input type="checkbox" id="norm-toggle" checked><span class="slider-track"></span></label>
       </div>
@@ -177,7 +208,8 @@
     <div>
       <div class="section-label">Controls</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
-        <button class="btn-primary"   id="btn-measure">&#9654; MEASURE</button>
+        <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
+        <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
         <button class="btn-secondary" id="btn-save"    disabled>SAVE CURVE</button>
         <button class="btn-secondary" id="btn-export"  disabled>EXPORT CSV</button>
         <button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
@@ -192,7 +224,7 @@
     </div>
 
     <div class="info-box" id="info-box">
-      Click <strong style="color:var(--accent)">MEASURE</strong> to begin.<br>
+      Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>
       Microphone access required.<br>
       Use headphones to avoid feedback.
     </div>
@@ -200,7 +232,7 @@
 
   <div class="chart-area">
     <div class="chart-header">
-      <div class="chart-title">Raw Frequency Response</div>
+      <div class="chart-title">Frequency Response</div>
       <div class="chart-meta">
         SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
         FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
@@ -208,24 +240,23 @@
       </div>
     </div>
     <div id="plot"></div>
-    <div class="watermark">FREQSCOPE ARTA-SYNC v1.5</div>
+    <div class="watermark">FREQSCOPE v1.7</div>
   </div>
 </main>
 
 <div class="log-panel">
   <span style="color:var(--accent);font-size:10px;flex-shrink:0;">LOG</span>
-  <span id="log-text">Ready. Smoothing disabled for stability. Click MEASURE.</span>
+  <span id="log-text">Ready. Select hardware, configure parameters, and click RECORD SIGNAL.</span>
   <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
 </div>
 
 <script>
 // ===================================================================
-//  FreqScope v1.5 (ARTA Parity Edition)
+//  FreqScope v1.7
 //  CHANGES:
-//   - REMOVED: Smoothing (prevents hanging).
-//   - FIXED: Impulse Response Windowing. Replaced destructive full-length 
-//     Hann window with a precise 22ms Tukey window (2ms pre, 20ms post) 
-//     to match ARTA's gating for nearfield/IEM measurements.
+//   - ADDED: Support for enumerating and selecting specific Sound Cards
+//     (Input Mics and Output Speakers) via the MediaDevices API and 
+//     AudioContext.setSinkId().
 // ===================================================================
 
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
@@ -233,25 +264,92 @@ let colorIdx = 0, audioCtx = null;
 let savedCurves = [], latestFreqs = null, latestDb = null;
 let isMeasuring = false, measureCount = 1;
 
-const $ = id => document.getElementById(id);
-const btnMeasure  = $('btn-measure');
-const btnSave     = $('btn-save');
-const btnExport   = $('btn-export');
-const btnClear    = $('btn-clear');
-const statusDot   = $('status-dot');
-const statusText  = $('status-text');
-const logText     = $('log-text');
-const progressBar = $('progress-bar');
-const infoBox     = $('info-box');
-const durSlider   = $('duration');
-const volSlider   = $('volume');
-const floSlider   = $('freq-lo');
-const fhiSlider   = $('freq-hi');
-const ySlider     = $('yrange');
-const normChk     = $('norm-toggle');
-const sweepSel    = $('sweep-type');
-const nameInput   = $('curve-name');
+let capturedRef = null;
+let capturedRec = null;
+let capturedSR = null;
+let capturedFLo = null;
+let capturedFHi = null;
 
+const $ = id => document.getElementById(id);
+const btnRecord     = $('btn-record');
+const btnAnalyze    = $('btn-analyze');
+const btnSave       = $('btn-save');
+const btnExport     = $('btn-export');
+const btnClear      = $('btn-clear');
+const btnRefreshDev = $('btn-refresh-dev');
+const statusDot     = $('status-dot');
+const statusText    = $('status-text');
+const logText       = $('log-text');
+const progressBar   = $('progress-bar');
+const infoBox       = $('info-box');
+const durSlider     = $('duration');
+const volSlider     = $('volume');
+const floSlider     = $('freq-lo');
+const fhiSlider     = $('freq-hi');
+const ySlider       = $('yrange');
+const normChk       = $('norm-toggle');
+const smoothSel     = $('smooth-val');
+const sweepSel      = $('sweep-type');
+const nameInput     = $('curve-name');
+const inDeviceSel   = $('input-device');
+const outDeviceSel  = $('output-device');
+
+// ───────────────────────────────────────────────────────────────────
+//  Hardware Device Enumeration
+// ───────────────────────────────────────────────────────────────────
+async function updateDeviceLists() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const currentIn = inDeviceSel.value;
+    const currentOut = outDeviceSel.value;
+
+    inDeviceSel.innerHTML = '<option value="">System Default Mic</option>';
+    outDeviceSel.innerHTML = '<option value="">System Default Output</option>';
+
+    let inputCount = 1, outputCount = 1;
+
+    devices.forEach(d => {
+      if (d.kind === 'audioinput') {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Unknown Input Device ${inputCount++}`;
+        inDeviceSel.appendChild(opt);
+      } else if (d.kind === 'audiooutput') {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId;
+        opt.textContent = d.label || `Unknown Output Device ${outputCount++}`;
+        outDeviceSel.appendChild(opt);
+      }
+    });
+
+    if (currentIn) inDeviceSel.value = currentIn;
+    if (currentOut) outDeviceSel.value = currentOut;
+  } catch (err) {
+    console.warn("Could not enumerate devices:", err);
+  }
+}
+
+// Request permission briefly to get the real names of the soundcards
+btnRefreshDev.addEventListener('click', async () => {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(t => t.stop()); // Stop immediately
+    await updateDeviceLists();
+    setStatus('ready', 'Device list updated.');
+  } catch (e) {
+    setStatus('', 'Permission needed to see device names. ' + e.message);
+  }
+});
+
+// Run once on load to populate defaults
+updateDeviceLists();
+
+
+// ───────────────────────────────────────────────────────────────────
+//  UI Updaters
+// ───────────────────────────────────────────────────────────────────
 function updateDisplays() {
   $('dur-val').textContent    = parseFloat(durSlider.value).toFixed(1) + ' s';
   $('vol-val').textContent    = volSlider.value + '%';
@@ -271,7 +369,7 @@ function setStatus(state, msg) {
 function setProgress(pct) { progressBar.style.width = Math.min(100, Math.max(0, pct)) + '%'; }
 
 // ───────────────────────────────────────────────────────────────────
-//  WEB WORKER SOURCE (MATH ONLY, NO SMOOTHING)
+//  WEB WORKER SOURCE
 // ───────────────────────────────────────────────────────────────────
 const WORKER_SRC = `
 'use strict';
@@ -321,7 +419,7 @@ function deconvolve(ref, rec) {
     const p = rRe[i]*rRe[i] + rIm[i]*rIm[i];
     if (p > maxP) maxP = p;
   }
-  const eps = maxP * 1e-6 + 1e-30;
+  const eps = maxP * 1e-8 + 1e-30;
 
   const hRe = new Float64Array(len), hIm = new Float64Array(len);
   for (let i = 0; i < len; i++) {
@@ -338,7 +436,6 @@ function deconvolve(ref, rec) {
 }
 
 function extractFR(ir, len, sr, fLo, fHi) {
-  // 1. Find IR peak
   const half = Math.floor(len / 2);
   let peakIdx = 0, peakVal = 0;
   for (let i = 0; i < half; i++) {
@@ -346,55 +443,112 @@ function extractFR(ir, len, sr, fLo, fHi) {
     if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
 
-  // 2. ARTA-Style Gating (2ms pre, 20ms post)
-  const preSamples = Math.floor(sr * 0.002);
-  const postSamples = Math.floor(sr * 0.020);
+  const preSamples = Math.floor(sr * 0.005); 
+  const postSamples = Math.floor(sr * 0.500); 
   let startIdx = peakIdx - preSamples;
   if (startIdx < 0) startIdx = 0;
 
-  // 3. FFT Size calculation
   const N = nextPow2(preSamples + postSamples);
   const wRe = new Float64Array(N);
   const wIm = new Float64Array(N);
 
-  // 4. Tukey Window (Flat top, 1ms fade on edges to prevent clicks)
-  const fadeSamples = Math.floor(sr * 0.001); 
+  const fadeSamples = Math.floor(sr * 0.002);
   for (let i = 0; i < N; i++) {
-    let val = (startIdx + i < half) ? ir[startIdx + i] : 0;
+    let val = (startIdx + i < len) ? ir[startIdx + i] : 0;
     
     if (i < fadeSamples) {
-      val *= 0.5 * (1 - Math.cos(Math.PI * i / fadeSamples)); // Fade in
+      val *= 0.5 * (1 - Math.cos(Math.PI * i / fadeSamples)); 
     } else if (i > N - fadeSamples) {
-      val *= 0.5 * (1 - Math.cos(Math.PI * (N - i) / fadeSamples)); // Fade out
+      val *= 0.5 * (1 - Math.cos(Math.PI * (N - i) / fadeSamples)); 
     }
     wRe[i] = val;
   }
 
   fft(wRe, wIm);
 
-  const freqs = [], db = [], binHz = sr / N;
+  const rawFreqs = [], rawDb = [], binHz = sr / N;
+  const maxSafeF = Math.min(sr/2 * 0.98, fHi * 1.5);
+  
   for (let i = 1; i < N / 2; i++) {
     const f = i * binHz;
-    if (f < fLo || f > fHi) continue;
+    if (f < fLo * 0.5 || f > maxSafeF) continue;
+    
     const mag = Math.sqrt(wRe[i]*wRe[i] + wIm[i]*wIm[i]);
     if (mag > 1e-30) { 
-      freqs.push(f); 
-      db.push(20 * Math.log10(mag)); 
+      rawFreqs.push(f); 
+      rawDb.push(20 * Math.log10(mag)); 
     }
   }
-  return { freqs, db, peakIdx, gateSize: N };
+  return { rawFreqs, rawDb, peakIdx, gateSize: N };
+}
+
+function fastSmooth(freqs, db, fraction, numPoints, fLo, fHi) {
+  if (!freqs || freqs.length === 0) return { freqs: [], db: [] };
+  
+  const minF = Math.max(fLo, freqs[0] || fLo); 
+  const maxF = Math.min(fHi, freqs[freqs.length - 1] || fHi);
+  
+  const targetFreqs = new Float64Array(numPoints);
+  const smoothedDb = new Float64Array(numPoints);
+  
+  const logMin = Math.log10(minF);
+  const logMax = Math.log10(maxF);
+  
+  let searchIdx = 0;
+  
+  for(let i=0; i<numPoints; i++) {
+    const fc = Math.pow(10, logMin + i*(logMax - logMin)/(numPoints - 1));
+    targetFreqs[i] = fc;
+    
+    const lo = fc * Math.pow(2, -0.5 / fraction);
+    const hi = fc * Math.pow(2, 0.5 / fraction);
+    
+    while (searchIdx < freqs.length && freqs[searchIdx] < lo) { searchIdx++; }
+    
+    let sumLinear = 0;
+    let count = 0;
+    let j = searchIdx;
+    
+    while (j < freqs.length && freqs[j] <= hi) {
+      sumLinear += Math.pow(10, db[j] / 10);
+      count++;
+      j++;
+    }
+    
+    if (count > 0) {
+      smoothedDb[i] = 10 * Math.log10(sumLinear / count);
+    } else {
+      let closest = searchIdx < freqs.length ? searchIdx : freqs.length - 1;
+      if (closest > 0 && Math.abs(freqs[closest-1] - fc) < Math.abs(freqs[closest] - fc)) {
+         closest = closest - 1;
+      }
+      smoothedDb[i] = db[closest];
+    }
+  }
+  return { freqs: Array.from(targetFreqs), db: Array.from(smoothedDb) };
 }
 
 self.onmessage = function(e) {
-  const { ref, rec, sr, fLo, fHi } = e.data;
+  const { ref, rec, sr, fLo, fHi, smoothFraction } = e.data;
 
-  self.postMessage({ type:'progress', pct:30, msg:'Deconvolving impulse response...' });
+  self.postMessage({ type:'progress', pct:20, msg:'Deconvolving...' });
   const { ir, len } = deconvolve(ref, rec);
 
-  self.postMessage({ type:'progress', pct:70, msg:'Applying ARTA-style gate & extracting...' });
-  const { freqs, db, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
+  self.postMessage({ type:'progress', pct:50, msg:'Applying ARTA 500ms gate...' });
+  const { rawFreqs, rawDb, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
 
-  self.postMessage({ type:'done', freqs, db, peakIdx, fftLen: gateSize });
+  self.postMessage({ type:'progress', pct:80, msg:'Smoothing data...' });
+  
+  let finalFreqs = rawFreqs;
+  let finalDb = rawDb;
+  
+  if (smoothFraction > 0) {
+     const smoothed = fastSmooth(rawFreqs, rawDb, smoothFraction, 800, fLo, fHi); 
+     finalFreqs = smoothed.freqs;
+     finalDb = smoothed.db;
+  }
+
+  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, fftLen: gateSize });
 };
 `;
 
@@ -552,58 +706,78 @@ function replot() {
 }
 
 // ───────────────────────────────────────────────────────────────────
-//  MAIN PIPELINE
+//  STEP 1: RECORDING
 // ───────────────────────────────────────────────────────────────────
-async function runMeasurement() {
+async function startRecording() {
   if (isMeasuring) return;
   isMeasuring = true;
-  btnMeasure.disabled = true; btnSave.disabled = true; btnExport.disabled = true;
+  btnRecord.disabled = true; btnAnalyze.disabled = true;
+  btnSave.disabled = true; btnExport.disabled = true;
 
   try {
     setStatus('processing', 'Initializing audio...');
-    setProgress(5);
+    setProgress(10);
     if (!audioCtx || audioCtx.state === 'closed')
       audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
     if (audioCtx.state === 'suspended') await audioCtx.resume();
-    const sr = audioCtx.sampleRate;
-    $('meta-sr').textContent = (sr/1000).toFixed(1) + ' kHz';
+    
+    // Set Output Device (Sink ID) if supported and selected
+    const selectedOutput = outDeviceSel.value;
+    if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
+      try { await audioCtx.setSinkId(selectedOutput); } 
+      catch (e) { console.warn("Could not set audio output device:", e); }
+    }
+    
+    capturedSR = audioCtx.sampleRate;
+    $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
 
     setStatus('processing', 'Requesting microphone...');
-    setProgress(10);
+    setProgress(20);
+    
+    // Set Input Device (Mic)
+    const selectedInput = inDeviceSel.value;
+    const audioConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
+    if (selectedInput) {
+      audioConstraints.deviceId = { exact: selectedInput };
+    }
+
     let stream;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio:{ echoCancellation:false, noiseSuppression:false, autoGainControl:false, channelCount:1 }
-      });
+      stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
     } catch(e) {
-      throw new Error('Mic access denied. Allow microphone, then refresh.');
+      throw new Error('Mic access denied or device unavailable. ' + e.message);
     }
 
     const duration  = parseFloat(durSlider.value);
     const volume    = parseInt(volSlider.value) / 100;
-    const fLo       = parseInt(floSlider.value);
-    const fHi       = parseInt(fhiSlider.value);
+    capturedFLo     = parseInt(floSlider.value);
+    capturedFHi     = parseInt(fhiSlider.value);
     const sweepType = sweepSel.value;
 
     setStatus('processing', 'Generating sweep...');
-    setProgress(15);
+    setProgress(30);
     const refSamples = sweepType === 'logsweep'
-      ? generateLogSweep(sr, duration, fLo, fHi)
-      : generatePinkNoise(sr, duration);
-    for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume;
+      ? generateLogSweep(capturedSR, duration, capturedFLo, capturedFHi)
+      : generatePinkNoise(capturedSR, duration);
+    
+    capturedRef = new Float32Array(refSamples.length);
+    for (let i = 0; i < refSamples.length; i++) {
+        refSamples[i] *= volume;
+        capturedRef[i] = refSamples[i]; 
+    }
 
     const preSec  = 0.5, postSec = 1.0;
-    const preN    = Math.floor(sr * preSec);
-    const totalN  = preN + refSamples.length + Math.floor(sr * postSec);
-    const playBuf = audioCtx.createBuffer(1, totalN, sr);
+    const preN    = Math.floor(capturedSR * preSec);
+    const totalN  = preN + refSamples.length + Math.floor(capturedSR * postSec);
+    const playBuf = audioCtx.createBuffer(1, totalN, capturedSR);
     const playData= playBuf.getChannelData(0);
     for (let i = 0; i < refSamples.length; i++) playData[preN + i] = refSamples[i];
 
     const totalRecSecs = preSec + duration + postSec + 1.0; 
     setStatus('recording', 'Starting recorder...');
-    setProgress(20);
+    setProgress(40);
 
-    const recordPromise = recordAudio(stream, totalRecSecs, sr);
+    const recordPromise = recordAudio(stream, totalRecSecs, capturedSR);
     await new Promise(r => setTimeout(r, 200));
 
     const gain = audioCtx.createGain();
@@ -618,49 +792,20 @@ async function runMeasurement() {
     const ticker = setInterval(() => {
       const elapsed = (performance.now() - t0) / 1000;
       const remaining = Math.max(0, totalRecSecs - elapsed);
-      setProgress(20 + Math.min((elapsed / totalRecSecs) * 52, 52));
+      setProgress(40 + Math.min((elapsed / totalRecSecs) * 60, 60));
       setStatus('recording', 'Recording... ' + remaining.toFixed(1) + 's remaining');
     }, 200);
 
-    const recRaw = await recordPromise;
+    capturedRec = await recordPromise;
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
 
-    setStatus('processing', 'Captured. Processing...');
-    setProgress(72);
-
-    const result = await new Promise((resolve, reject) => {
-      const worker = makeWorker();
-      worker.onmessage = e => {
-        const d = e.data;
-        if (d.type === 'progress') { setProgress(d.pct); setStatus('processing', d.msg); }
-        else if (d.type === 'done') { worker.terminate(); resolve(d); }
-      };
-      worker.onerror = e => { worker.terminate(); reject(new Error('Worker: ' + e.message)); };
-
-      const refBuf = refSamples.buffer.slice(0);
-      const recBuf = recRaw.buffer.slice(0);
-      worker.postMessage(
-        { ref: new Float32Array(refBuf), rec: new Float32Array(recBuf), sr, fLo, fHi },
-        [refBuf, recBuf]
-      );
-    });
-
-    $('meta-fft').textContent = result.fftLen;
-    $('meta-pts').textContent = result.freqs.length;
-
-    if (!result.freqs.length)
-      throw new Error('No frequency data extracted.');
-
-    latestFreqs  = result.freqs;
-    latestDb     = result.db;
-
+    const capSecs = (capturedRec.length / capturedSR).toFixed(2);
+    setStatus('ready', 'Captured ' + capturedRec.length + ' samples (' + capSecs + 's). Ready to analyze.');
+    infoBox.innerHTML = 'Signal captured successfully.<br>Click <strong style="color:var(--green)">ANALYZE DATA</strong> to calculate frequency response.';
+    
     setProgress(100);
-    replot();
-    const latMs = (result.peakIdx / sr * 1000).toFixed(1);
-    setStatus('ready', 'Done! IR peak at ' + latMs + ' ms');
-    infoBox.innerHTML = 'Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay.';
-    btnSave.disabled = false; btnExport.disabled = false;
+    btnAnalyze.disabled = false;
     setTimeout(() => setProgress(0), 1500);
 
   } catch(err) {
@@ -671,7 +816,79 @@ async function runMeasurement() {
   }
 
   isMeasuring = false;
-  btnMeasure.disabled = false;
+  btnRecord.disabled = false;
+  
+  // Re-populate devices in case the successful permission grant just happened
+  updateDeviceLists();
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  STEP 2: ANALYSIS
+// ───────────────────────────────────────────────────────────────────
+async function runAnalysis() {
+  if (!capturedRef || !capturedRec) return;
+  
+  btnRecord.disabled = true;
+  btnAnalyze.disabled = true;
+
+  try {
+    setStatus('processing', 'Starting FFT analysis...');
+    setProgress(10);
+
+    const result = await new Promise((resolve, reject) => {
+      const worker = makeWorker();
+      worker.onmessage = e => {
+        const d = e.data;
+        if (d.type === 'progress') { setProgress(d.pct); setStatus('processing', d.msg); }
+        else if (d.type === 'done') { worker.terminate(); resolve(d); }
+      };
+      worker.onerror = e => { worker.terminate(); reject(new Error('Worker: ' + e.message)); };
+
+      const refBuf = capturedRef.buffer.slice(0);
+      const recBuf = capturedRec.buffer.slice(0);
+      
+      worker.postMessage(
+        { 
+          ref: new Float32Array(refBuf), 
+          rec: new Float32Array(recBuf), 
+          sr: capturedSR, 
+          fLo: capturedFLo, 
+          fHi: capturedFHi,
+          smoothFraction: parseFloat(smoothSel.value)
+        },
+        [refBuf, recBuf]
+      );
+    });
+
+    $('meta-fft').textContent = result.fftLen;
+    $('meta-pts').textContent = result.freqs.length;
+
+    if (!result.freqs.length)
+      throw new Error('No frequency data extracted. Is the mic picking up the speaker?');
+
+    latestFreqs  = result.freqs;
+    latestDb     = result.db;
+
+    setProgress(100);
+    replot();
+    
+    const latMs = (result.peakIdx / capturedSR * 1000).toFixed(1);
+    setStatus('ready', 'Done! ' + result.freqs.length + ' pts, IR peak at ' + latMs + ' ms');
+    infoBox.innerHTML = 'Analysis complete. Change smoothing and re-click <strong style="color:var(--green)">ANALYZE</strong> or <strong style="color:var(--accent)">SAVE CURVE</strong>.';
+    
+    btnSave.disabled = false; 
+    btnExport.disabled = false;
+    setTimeout(() => setProgress(0), 1500);
+
+  } catch(err) {
+    console.error(err);
+    setStatus('', 'Error: ' + err.message);
+    infoBox.innerHTML = '<span style="color:var(--red)">Error:</span> ' + err.message;
+    setProgress(0);
+  }
+
+  btnRecord.disabled = false;
+  btnAnalyze.disabled = false; 
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -708,12 +925,14 @@ function renderSavedList() {
 
 function clearAll() {
   savedCurves = []; latestFreqs = latestDb = null;
+  capturedRef = capturedRec = null;
   colorIdx = 0; measureCount = 1;
   nameInput.value = 'Measurement 1';
-  btnSave.disabled = btnExport.disabled = true;
+  btnAnalyze.disabled = btnSave.disabled = btnExport.disabled = true;
   renderSavedList(); initPlot();
   ['meta-sr','meta-fft','meta-pts'].forEach(id => $(id).textContent = '\u2014');
   setStatus('', 'Cleared. Ready for new measurements.');
+  infoBox.innerHTML = 'Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>Microphone access required.<br>Use headphones to avoid feedback.';
 }
 
 function exportCSV() {
@@ -733,13 +952,14 @@ function exportCSV() {
   a.click();
 }
 
-btnMeasure.addEventListener('click', runMeasurement);
+btnRecord.addEventListener('click', startRecording);
+btnAnalyze.addEventListener('click', runAnalysis);
 btnSave.addEventListener('click', saveCurve);
 btnExport.addEventListener('click', exportCSV);
 btnClear.addEventListener('click', clearAll);
 
 initPlot();
-setStatus('', 'Ready. Smoothing disabled. Click MEASURE.');
+setStatus('', 'Ready. Select hardware, configure parameters, and click RECORD SIGNAL.');
 </script>
 </body>
 </html>
