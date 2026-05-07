@@ -1,0 +1,1125 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FreqScope — Frequency Response Analyzer</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
+
+  :root {
+    --bg: #0a0c0f;
+    --surface: #111418;
+    --surface2: #181c22;
+    --border: #222830;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --text: #c8d4e0;
+    --text-dim: #5a6a7a;
+    --green: #39ff85;
+    --red: #ff3d5a;
+    --mono: 'Share Tech Mono', monospace;
+    --sans: 'Barlow', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-weight: 300;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* HEADER */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .logo {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+  }
+
+  .logo-name {
+    font-family: var(--mono);
+    font-size: 22px;
+    color: var(--accent);
+    letter-spacing: 2px;
+  }
+
+  .logo-tag {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  .status-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-dim);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--text-dim);
+    transition: background 0.3s;
+  }
+  .status-dot.ready { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.recording { background: var(--red); box-shadow: 0 0 8px var(--red); animation: pulse 0.8s infinite; }
+  .status-dot.processing { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  /* MAIN LAYOUT */
+  main {
+    display: grid;
+    grid-template-columns: 280px 1fr;
+    flex: 1;
+    gap: 0;
+  }
+
+  /* SIDEBAR */
+  .sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 24px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+    overflow-y: auto;
+  }
+
+  .section-label {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-label::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  .param-row {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 14px;
+  }
+
+  .param-label {
+    font-size: 11px;
+    color: var(--text-dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .param-value {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--accent);
+  }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    width: 100%;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    outline: none;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px; height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 6px var(--accent);
+    cursor: pointer;
+  }
+
+  select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+  }
+  select:focus { border-color: var(--accent); }
+
+  /* BUTTONS */
+  .btn-primary {
+    width: 100%;
+    padding: 13px;
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 13px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-primary::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: var(--accent);
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .btn-primary:hover::before { opacity: 0.08; }
+  .btn-primary:active { transform: scale(0.98); }
+  .btn-primary:disabled {
+    border-color: var(--border);
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+  .btn-primary:disabled::before { display: none; }
+
+  .btn-secondary {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+  .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+  .btn-secondary:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  .btn-danger {
+    width: 100%;
+    padding: 10px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+  }
+  .btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+  /* CHART AREA */
+  .chart-area {
+    display: flex;
+    flex-direction: column;
+    padding: 24px;
+    gap: 16px;
+    overflow: hidden;
+  }
+
+  .chart-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .chart-title {
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-dim);
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .chart-meta {
+    display: flex;
+    gap: 20px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+
+  .chart-meta span { color: var(--text); }
+
+  #plot {
+    flex: 1;
+    min-height: 420px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--surface);
+  }
+
+  /* LOG / PROGRESS */
+  .log-panel {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 10px 24px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: 38px;
+  }
+
+  #log-text { color: var(--text); }
+
+  .progress-bar-wrap {
+    flex: 1;
+    height: 3px;
+    background: var(--border);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .progress-bar {
+    height: 100%;
+    width: 0%;
+    background: var(--accent);
+    border-radius: 2px;
+    transition: width 0.1s linear;
+    box-shadow: 0 0 6px var(--accent);
+  }
+
+  /* OVERLAYS */
+  .saved-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+
+  .saved-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 6px 10px;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    font-family: var(--mono);
+    font-size: 11px;
+    gap: 8px;
+  }
+
+  .saved-item .swatch {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .saved-item .name { flex: 1; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .saved-item button {
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    font-size: 13px;
+    padding: 0 2px;
+    transition: color 0.2s;
+  }
+  .saved-item button:hover { color: var(--red); }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    color: var(--text-dim);
+    margin-bottom: 10px;
+  }
+
+  .toggle {
+    position: relative;
+    width: 36px; height: 20px;
+  }
+  .toggle input { opacity: 0; width: 0; height: 0; }
+  .slider-track {
+    position: absolute;
+    inset: 0;
+    background: var(--border);
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+  .toggle input:checked + .slider-track { background: var(--accent); }
+  .slider-track::before {
+    content: '';
+    position: absolute;
+    width: 14px; height: 14px;
+    left: 3px; top: 3px;
+    background: white;
+    border-radius: 50%;
+    transition: transform 0.2s;
+  }
+  .toggle input:checked + .slider-track::before { transform: translateX(16px); }
+
+  .info-box {
+    padding: 10px 12px;
+    background: var(--surface2);
+    border-left: 2px solid var(--accent);
+    font-size: 11px;
+    line-height: 1.7;
+    color: var(--text-dim);
+  }
+
+  .watermark {
+    position: absolute;
+    bottom: 60px; right: 30px;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--border);
+    letter-spacing: 2px;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">
+    <span class="logo-name">FreqScope</span>
+    <span class="logo-tag">Frequency Response Analyzer</span>
+  </div>
+  <div class="status-bar">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text">IDLE</span>
+  </div>
+</header>
+
+<main>
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <div>
+      <div class="section-label">Signal</div>
+
+      <div class="param-row">
+        <div class="param-label">Sweep Type</div>
+        <select id="sweep-type">
+          <option value="logsweep">Log Swept-Sine (recommended)</option>
+          <option value="pinknoise">Pink Noise</option>
+        </select>
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">
+          <span>Duration</span>
+          <span class="param-value" id="dur-val">2.0 s</span>
+        </div>
+        <input type="range" id="duration" min="1" max="8" step="0.5" value="2">
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">
+          <span>Output Volume</span>
+          <span class="param-value" id="vol-val">80%</span>
+        </div>
+        <input type="range" id="volume" min="10" max="100" step="5" value="80">
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">
+          <span>Freq Range Low</span>
+          <span class="param-value" id="flo-val">20 Hz</span>
+        </div>
+        <input type="range" id="freq-lo" min="10" max="200" step="10" value="20">
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">
+          <span>Freq Range High</span>
+          <span class="param-value" id="fhi-val">20000 Hz</span>
+        </div>
+        <input type="range" id="freq-hi" min="5000" max="20000" step="1000" value="20000">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Processing</div>
+
+      <div class="toggle-row">
+        <span>Smoothing (1/3 oct)</span>
+        <label class="toggle">
+          <input type="checkbox" id="smooth-toggle" checked>
+          <span class="slider-track"></span>
+        </label>
+      </div>
+
+      <div class="toggle-row">
+        <span>Normalize 0 dB peak</span>
+        <label class="toggle">
+          <input type="checkbox" id="norm-toggle" checked>
+          <span class="slider-track"></span>
+        </label>
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">
+          <span>Y-axis range</span>
+          <span class="param-value" id="yrange-val">±30 dB</span>
+        </div>
+        <input type="range" id="yrange" min="10" max="60" step="5" value="30">
+      </div>
+
+      <div class="param-row">
+        <div class="param-label">Curve Name</div>
+        <input type="text" id="curve-name" value="Measurement 1" style="
+          width:100%; background:var(--surface2); border:1px solid var(--border);
+          color:var(--text); font-family:var(--mono); font-size:12px;
+          padding:8px 10px; border-radius:4px; outline:none;">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Controls</div>
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn-primary" id="btn-measure">▶ MEASURE</button>
+        <button class="btn-secondary" id="btn-save" disabled>SAVE CURVE</button>
+        <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
+        <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">Saved Curves</div>
+      <div class="saved-list" id="saved-list">
+        <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">
+          No saved curves
+        </div>
+      </div>
+    </div>
+
+    <div class="info-box" id="info-box">
+      Click <strong style="color:var(--accent)">MEASURE</strong> to begin.<br>
+      Microphone access required.<br>
+      Use headphones or position mic away from speakers to avoid feedback.
+    </div>
+
+  </aside>
+
+  <!-- CHART -->
+  <div class="chart-area" style="position:relative;">
+    <div class="chart-header">
+      <div class="chart-title">Frequency Response</div>
+      <div class="chart-meta">
+        SR: <span id="meta-sr">—</span> &nbsp;|&nbsp;
+        FFT: <span id="meta-fft">—</span> &nbsp;|&nbsp;
+        Points: <span id="meta-pts">—</span>
+      </div>
+    </div>
+    <div id="plot"></div>
+    <div class="watermark">FREQSCOPE v1.0</div>
+  </div>
+</main>
+
+<div class="log-panel">
+  <span style="color:var(--accent);font-size:10px;">LOG</span>
+  <span id="log-text">Ready. Configure parameters and click MEASURE.</span>
+  <div class="progress-bar-wrap">
+    <div class="progress-bar" id="progress-bar"></div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────
+//  FreqScope — Core Engine
+// ─────────────────────────────────────────────────
+
+const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
+let colorIdx = 0;
+
+let audioCtx = null;
+let savedCurves = [];
+let latestFreqs = null, latestDb = null;
+let isMeasuring = false;
+let measureCount = 1;
+
+// ── UI refs
+const btnMeasure = document.getElementById('btn-measure');
+const btnSave    = document.getElementById('btn-save');
+const btnExport  = document.getElementById('btn-export');
+const btnClear   = document.getElementById('btn-clear');
+const statusDot  = document.getElementById('status-dot');
+const statusText = document.getElementById('status-text');
+const logText    = document.getElementById('log-text');
+const progressBar = document.getElementById('progress-bar');
+const infoBox    = document.getElementById('info-box');
+
+// ── Param refs
+const durSlider  = document.getElementById('duration');
+const volSlider  = document.getElementById('volume');
+const floSlider  = document.getElementById('freq-lo');
+const fhiSlider  = document.getElementById('freq-hi');
+const ySlider    = document.getElementById('yrange');
+const smoothChk  = document.getElementById('smooth-toggle');
+const normChk    = document.getElementById('norm-toggle');
+const sweepSel   = document.getElementById('sweep-type');
+const nameInput  = document.getElementById('curve-name');
+
+// ── Param display
+function updateDisplays() {
+  document.getElementById('dur-val').textContent  = parseFloat(durSlider.value).toFixed(1) + ' s';
+  document.getElementById('vol-val').textContent  = volSlider.value + '%';
+  document.getElementById('flo-val').textContent  = floSlider.value + ' Hz';
+  document.getElementById('fhi-val').textContent  = fhiSlider.value + ' Hz';
+  document.getElementById('yrange-val').textContent = '±' + ySlider.value + ' dB';
+}
+[durSlider, volSlider, floSlider, fhiSlider, ySlider].forEach(s => s.addEventListener('input', updateDisplays));
+[smoothChk, normChk, ySlider].forEach(el => el.addEventListener('change', () => { if(latestFreqs) replot(); }));
+updateDisplays();
+
+// ── Status helpers
+function setStatus(state, msg) {
+  statusDot.className = 'status-dot ' + state;
+  statusText.textContent = state.toUpperCase();
+  logText.textContent = msg;
+}
+
+function setProgress(pct) {
+  progressBar.style.width = pct + '%';
+}
+
+// ─────────────────────────────────────────────────
+//  FFT helpers
+// ─────────────────────────────────────────────────
+
+// Simple in-place radix-2 Cooley-Tukey FFT
+function fft(re, im) {
+  const n = re.length;
+  // bit-reversal
+  for (let i = 1, j = 0; i < n; i++) {
+    let bit = n >> 1;
+    for (; j & bit; bit >>= 1) j ^= bit;
+    j ^= bit;
+    if (i < j) {
+      [re[i], re[j]] = [re[j], re[i]];
+      [im[i], im[j]] = [im[j], im[i]];
+    }
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const ang = -2 * Math.PI / len;
+    const wRe = Math.cos(ang), wIm = Math.sin(ang);
+    for (let i = 0; i < n; i += len) {
+      let curRe = 1, curIm = 0;
+      for (let j = 0; j < len / 2; j++) {
+        const uRe = re[i+j], uIm = im[i+j];
+        const vRe = re[i+j+len/2]*curRe - im[i+j+len/2]*curIm;
+        const vIm = re[i+j+len/2]*curIm + im[i+j+len/2]*curRe;
+        re[i+j]         = uRe + vRe; im[i+j]         = uIm + vIm;
+        re[i+j+len/2]   = uRe - vRe; im[i+j+len/2]   = uIm - vIm;
+        const newCurRe = curRe*wRe - curIm*wIm;
+        curIm = curRe*wIm + curIm*wRe;
+        curRe = newCurRe;
+      }
+    }
+  }
+}
+
+function nextPow2(n) { let p = 1; while(p < n) p <<= 1; return p; }
+
+function hannWindow(n) {
+  const w = new Float32Array(n);
+  for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2*Math.PI*i/(n-1)));
+  return w;
+}
+
+// ─────────────────────────────────────────────────
+//  Signal Generation
+// ─────────────────────────────────────────────────
+
+function generateLogSweep(sr, duration, f1, f2) {
+  const n = Math.floor(sr * duration);
+  const buf = new Float32Array(n);
+  const k = Math.log(f2/f1);
+  for (let i = 0; i < n; i++) {
+    const t = i / sr;
+    buf[i] = Math.sin(2*Math.PI*f1*duration/k * (Math.exp(t/duration*k) - 1));
+  }
+  return buf;
+}
+
+function generatePinkNoise(sr, duration) {
+  const n = Math.floor(sr * duration);
+  const buf = new Float32Array(n);
+  let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
+  for (let i = 0; i < n; i++) {
+    const w = Math.random()*2-1;
+    b0=0.99886*b0+w*0.0555179; b1=0.99332*b1+w*0.0750759;
+    b2=0.96900*b2+w*0.1538520; b3=0.86650*b3+w*0.3104856;
+    b4=0.55000*b4+w*0.5329522; b5=-0.7616*b5-w*0.0168980;
+    buf[i] = (b0+b1+b2+b3+b4+b5+b6+w*0.5362) / 7;
+    b6 = w * 0.115926;
+  }
+  return buf;
+}
+
+// ─────────────────────────────────────────────────
+//  Deconvolution (frequency-domain division)
+// ─────────────────────────────────────────────────
+
+function computeImpulseResponse(refSignal, recSignal, sr) {
+  const len = nextPow2(Math.max(refSignal.length, recSignal.length) * 2);
+
+  const refRe = new Float64Array(len);
+  const refIm = new Float64Array(len);
+  const recRe = new Float64Array(len);
+  const recIm = new Float64Array(len);
+
+  for (let i = 0; i < refSignal.length; i++) refRe[i] = refSignal[i];
+  for (let i = 0; i < recSignal.length; i++) recRe[i] = recSignal[i];
+
+  fft(refRe, refIm);
+  fft(recRe, recIm);
+
+  // H(f) = Rec(f) / Ref(f) with regularization
+  const irRe = new Float64Array(len);
+  const irIm = new Float64Array(len);
+  const eps = 1e-10;
+  for (let i = 0; i < len; i++) {
+    const denom = refRe[i]*refRe[i] + refIm[i]*refIm[i] + eps;
+    irRe[i] = (recRe[i]*refRe[i] + recIm[i]*refIm[i]) / denom;
+    irIm[i] = (recIm[i]*refRe[i] - recRe[i]*refIm[i]) / denom;
+  }
+
+  return { irRe, irIm, len };
+}
+
+// ─────────────────────────────────────────────────
+//  Frequency Response Extraction
+// ─────────────────────────────────────────────────
+
+function extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi) {
+  // Apply Hann window to first part of IR
+  const irLen = Math.min(len, Math.floor(sr * 0.5)); // use first 0.5s of IR
+  const win = hannWindow(irLen);
+  const windRe = new Float64Array(len);
+  const windIm = new Float64Array(len);
+  for (let i = 0; i < irLen; i++) {
+    windRe[i] = irRe[i] * win[i];
+    windIm[i] = irIm[i] * win[i];
+  }
+
+  fft(windRe, windIm);
+
+  const freqs = [];
+  const db = [];
+  const binW = sr / len;
+
+  for (let i = 1; i < len/2; i++) {
+    const f = i * binW;
+    if (f < fLo || f > fHi) continue;
+    const mag = Math.sqrt(windRe[i]*windRe[i] + windIm[i]*windIm[i]);
+    if (mag > 0) {
+      freqs.push(f);
+      db.push(20 * Math.log10(mag));
+    }
+  }
+  return { freqs, db };
+}
+
+// ─────────────────────────────────────────────────
+//  1/3-Octave Smoothing
+// ─────────────────────────────────────────────────
+
+function smoothOctave(freqs, db, fraction) {
+  const out = new Float64Array(db.length);
+  for (let i = 0; i < freqs.length; i++) {
+    const fc = freqs[i];
+    const fLow  = fc * Math.pow(2, -1/(2*fraction));
+    const fHigh = fc * Math.pow(2,  1/(2*fraction));
+    let sum = 0, count = 0;
+    for (let j = 0; j < freqs.length; j++) {
+      if (freqs[j] >= fLow && freqs[j] <= fHigh) {
+        sum += db[j]; count++;
+      }
+    }
+    out[i] = count > 0 ? sum / count : db[i];
+  }
+  return Array.from(out);
+}
+
+// ─────────────────────────────────────────────────
+//  Normalize: shift so peak = 0 dB
+// ─────────────────────────────────────────────────
+
+function normalize(db) {
+  const peak = Math.max(...db);
+  return db.map(v => v - peak);
+}
+
+// ─────────────────────────────────────────────────
+//  Plotting
+// ─────────────────────────────────────────────────
+
+function initPlot() {
+  const layout = makePlotLayout();
+  Plotly.newPlot('plot', [], layout, { displayModeBar: false, responsive: true });
+}
+
+function makePlotLayout(yRange = 30) {
+  return {
+    paper_bgcolor: '#111418',
+    plot_bgcolor:  '#0d1015',
+    margin: { l: 60, r: 20, t: 20, b: 50 },
+    xaxis: {
+      type: 'log',
+      title: { text: 'Frequency (Hz)', font: { family: 'Share Tech Mono', size: 11, color: '#5a6a7a' } },
+      range: [Math.log10(10), Math.log10(25000)],
+      gridcolor: '#1a2030', gridwidth: 1,
+      tickcolor: '#2a3444', linecolor: '#2a3444',
+      tickfont: { family: 'Share Tech Mono', size: 10, color: '#5a6a7a' },
+      tickvals: [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000],
+      ticktext: ['20','50','100','200','500','1k','2k','5k','10k','20k'],
+      zeroline: false,
+    },
+    yaxis: {
+      title: { text: 'Level (dB)', font: { family: 'Share Tech Mono', size: 11, color: '#5a6a7a' } },
+      range: [-yRange, yRange],
+      gridcolor: '#1a2030', gridwidth: 1,
+      tickcolor: '#2a3444', linecolor: '#2a3444',
+      tickfont: { family: 'Share Tech Mono', size: 10, color: '#5a6a7a' },
+      zeroline: true, zerolinecolor: '#2a3444', zerolinewidth: 1,
+    },
+    legend: {
+      font: { family: 'Share Tech Mono', size: 10, color: '#5a6a7a' },
+      bgcolor: '#111418', bordercolor: '#222830', borderwidth: 1,
+      x: 0.01, y: 0.99, xanchor: 'left', yanchor: 'top',
+    },
+    showlegend: savedCurves.length > 0 || latestFreqs !== null,
+    hovermode: 'x unified',
+    hoverlabel: {
+      bgcolor: '#181c22',
+      bordercolor: '#222830',
+      font: { family: 'Share Tech Mono', size: 11, color: '#c8d4e0' }
+    }
+  };
+}
+
+function replot() {
+  const yRange = parseInt(ySlider.value);
+  const smooth = smoothChk.checked;
+  const norm   = normChk.checked;
+  const traces = [];
+
+  // Saved curves
+  savedCurves.forEach(c => {
+    let db = smooth ? smoothOctave(c.freqs, c.rawDb, 3) : c.rawDb;
+    if (norm) db = normalize(db);
+    traces.push({
+      x: c.freqs, y: db, name: c.name, mode: 'lines',
+      line: { color: c.color, width: 1.5 },
+      hovertemplate: '%{y:.1f} dB<extra>' + c.name + '</extra>'
+    });
+  });
+
+  // Live latest
+  if (latestFreqs) {
+    const liveName = nameInput.value || 'Live';
+    let db = smooth ? smoothOctave(latestFreqs, latestDb, 3) : latestDb;
+    if (norm) db = normalize(db);
+    traces.push({
+      x: latestFreqs, y: db, name: liveName + ' ●', mode: 'lines',
+      line: { color: COLORS[colorIdx % COLORS.length], width: 2 },
+      hovertemplate: '%{y:.1f} dB<extra>' + liveName + '</extra>'
+    });
+  }
+
+  Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar: false, responsive: true });
+}
+
+// ─────────────────────────────────────────────────
+//  Main Measurement Pipeline
+// ─────────────────────────────────────────────────
+
+async function runMeasurement() {
+  if (isMeasuring) return;
+  isMeasuring = true;
+  btnMeasure.disabled = true;
+  btnSave.disabled = true;
+  btnExport.disabled = true;
+
+  try {
+    // 1. Init AudioContext
+    setStatus('processing', 'Initializing audio context…');
+    setProgress(5);
+    if (!audioCtx || audioCtx.state === 'closed') {
+      audioCtx = new AudioContext({ sampleRate: 48000 });
+    }
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const sr = audioCtx.sampleRate;
+    document.getElementById('meta-sr').textContent = (sr/1000).toFixed(1) + ' kHz';
+
+    // 2. Request mic
+    setStatus('processing', 'Requesting microphone access…');
+    setProgress(10);
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+
+    // 3. Generate reference signal
+    const duration  = parseFloat(durSlider.value);
+    const volume    = parseInt(volSlider.value) / 100;
+    const fLo       = parseInt(floSlider.value);
+    const fHi       = parseInt(fhiSlider.value);
+    const sweepType = sweepSel.value;
+
+    setStatus('processing', 'Generating test signal…');
+    setProgress(20);
+
+    const refSamples = sweepType === 'logsweep'
+      ? generateLogSweep(sr, duration, fLo, fHi)
+      : generatePinkNoise(sr, duration);
+
+    // Scale by volume
+    for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume;
+
+    // 4. Build audio graph
+    const silencePre  = 0.3; // seconds silence before sweep
+    const silencePost = 0.5; // seconds to capture after sweep
+    const totalSamples = Math.floor(sr * (silencePre + duration + silencePost));
+
+    const playBuffer = audioCtx.createBuffer(1, totalSamples, sr);
+    const playData   = playBuffer.getChannelData(0);
+    const offset     = Math.floor(silencePre * sr);
+    for (let i = 0; i < refSamples.length; i++) playData[offset + i] = refSamples[i];
+
+    // 5. Record
+    setStatus('recording', 'Recording… please wait');
+    setProgress(30);
+
+    const micSource  = audioCtx.createMediaStreamSource(stream);
+    const scriptProc = audioCtx.createScriptProcessor(4096, 1, 1);
+    const recorded   = [];
+
+    micSource.connect(scriptProc);
+    scriptProc.connect(audioCtx.destination);
+
+    scriptProc.onaudioprocess = (e) => {
+      const ch = e.inputBuffer.getChannelData(0);
+      recorded.push(new Float32Array(ch));
+    };
+
+    // Play test signal
+    const src = audioCtx.createBufferSource();
+    src.buffer = playBuffer;
+    const gainNode = audioCtx.createGain();
+    gainNode.gain.value = 1.0;
+    src.connect(gainNode);
+    gainNode.connect(audioCtx.destination);
+
+    const totalTime = silencePre + duration + silencePost;
+    src.start();
+
+    // Progress ticks
+    const startTime = performance.now();
+    await new Promise(resolve => {
+      const tick = () => {
+        const elapsed = (performance.now() - startTime) / 1000;
+        const pct = 30 + Math.min((elapsed / totalTime) * 40, 40);
+        setProgress(pct);
+        if (elapsed < totalTime) requestAnimationFrame(tick);
+        else resolve();
+      };
+      requestAnimationFrame(tick);
+      setTimeout(resolve, (totalTime + 0.1) * 1000);
+    });
+
+    // Cleanup
+    scriptProc.disconnect();
+    micSource.disconnect();
+    stream.getTracks().forEach(t => t.stop());
+
+    // 6. Assemble recording
+    setStatus('processing', 'Processing recorded audio…');
+    setProgress(72);
+
+    const recFlat = new Float32Array(recorded.reduce((s,a)=>s+a.length,0));
+    let pos = 0;
+    for (const chunk of recorded) { recFlat.set(chunk, pos); pos += chunk.length; }
+
+    // Trim to same length as play buffer
+    const recTrimmed = recFlat.slice(0, totalSamples);
+    // The reference without silence padding:
+    const refFull = new Float32Array(totalSamples);
+    for (let i = 0; i < refSamples.length; i++) refFull[offset + i] = refSamples[i];
+
+    // 7. Deconvolution
+    setStatus('processing', 'Running deconvolution…');
+    setProgress(82);
+
+    const { irRe, irIm, len } = computeImpulseResponse(refFull, recTrimmed, sr);
+    document.getElementById('meta-fft').textContent = len;
+
+    // 8. Extract frequency response
+    setStatus('processing', 'Computing frequency response…');
+    setProgress(90);
+
+    const { freqs, db } = extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi);
+    document.getElementById('meta-pts').textContent = freqs.length;
+
+    if (freqs.length === 0) throw new Error('No frequency data in selected range. Check mic & output levels.');
+
+    latestFreqs = freqs;
+    latestDb    = db;
+
+    // 9. Plot
+    setProgress(98);
+    replot();
+    setProgress(100);
+
+    setStatus('ready', `Done! ${freqs.length} data points captured.`);
+    infoBox.innerHTML = `Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay with other measurements.<br>Adjust smoothing & normalization above.`;
+    btnSave.disabled = false;
+    btnExport.disabled = false;
+
+    setTimeout(() => setProgress(0), 1200);
+
+  } catch(err) {
+    console.error(err);
+    setStatus('', 'Error: ' + err.message);
+    infoBox.innerHTML = `<span style="color:var(--red)">Error: ${err.message}</span><br>Check mic permissions and audio output.`;
+    setProgress(0);
+  }
+
+  isMeasuring = false;
+  btnMeasure.disabled = false;
+}
+
+// ─────────────────────────────────────────────────
+//  Save / Clear / Export
+// ─────────────────────────────────────────────────
+
+function saveCurve() {
+  if (!latestFreqs) return;
+  const color = COLORS[colorIdx % COLORS.length];
+  colorIdx++;
+  const name  = nameInput.value || ('Curve ' + (savedCurves.length+1));
+  savedCurves.push({ name, freqs: latestFreqs, rawDb: latestDb, color });
+  latestFreqs = null; latestDb = null;
+  btnSave.disabled = true;
+  btnExport.disabled = true;
+  measureCount++;
+  nameInput.value = 'Measurement ' + measureCount;
+  renderSavedList();
+  replot();
+  setStatus('ready', `Curve "${name}" saved.`);
+}
+
+function removeSaved(idx) {
+  savedCurves.splice(idx, 1);
+  renderSavedList();
+  replot();
+}
+
+function renderSavedList() {
+  const el = document.getElementById('saved-list');
+  if (savedCurves.length === 0) {
+    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>';
+    return;
+  }
+  el.innerHTML = savedCurves.map((c,i) => `
+    <div class="saved-item">
+      <div class="swatch" style="background:${c.color}"></div>
+      <div class="name">${c.name}</div>
+      <button onclick="removeSaved(${i})" title="Remove">✕</button>
+    </div>
+  `).join('');
+}
+
+function clearAll() {
+  savedCurves = [];
+  latestFreqs = null;
+  latestDb    = null;
+  colorIdx    = 0;
+  measureCount = 1;
+  nameInput.value = 'Measurement 1';
+  btnSave.disabled = true;
+  btnExport.disabled = true;
+  renderSavedList();
+  initPlot();
+  document.getElementById('meta-sr').textContent = '—';
+  document.getElementById('meta-fft').textContent = '—';
+  document.getElementById('meta-pts').textContent = '—';
+  setStatus('', 'Cleared. Ready for new measurements.');
+}
+
+function exportCSV() {
+  if (!latestFreqs && savedCurves.length === 0) return;
+  const allCurves = [...savedCurves];
+  if (latestFreqs) allCurves.push({ name: nameInput.value || 'Live', freqs: latestFreqs, rawDb: latestDb });
+
+  let csv = 'Frequency (Hz),' + allCurves.map(c=>c.name).join(',') + '\n';
+  // Use first curve's freqs as reference
+  const ref = allCurves[0];
+  for (let i = 0; i < ref.freqs.length; i++) {
+    const row = [ref.freqs[i].toFixed(2)];
+    for (const c of allCurves) {
+      row.push(c.rawDb[i] !== undefined ? c.rawDb[i].toFixed(3) : '');
+    }
+    csv += row.join(',') + '\n';
+  }
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'freqscope_export.csv';
+  a.click();
+}
+
+// ── Wire up buttons
+btnMeasure.addEventListener('click', runMeasurement);
+btnSave.addEventListener('click', saveCurve);
+btnExport.addEventListener('click', exportCSV);
+btnClear.addEventListener('click', clearAll);
+
+// ── Init
+initPlot();
+setStatus('', 'Ready. Configure parameters and click MEASURE.');
+</script>
+</body>
+</html>
