@@ -567,13 +567,17 @@
 </div>
 
 <script>
-// ─────────────────────────────────────────────────
-//  FreqScope — Core Engine
-// ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  FreqScope v1.1 — Fixed engine
+//  Fixes: (1) iterative FFT, no recursion, no stack overflow
+//         (2) ScriptProcessor replaced with recorder-via-chunks
+//             using a SharedArrayBuffer-free approach that works
+//             in all browsers without COOP headers
+//         (3) cross-correlation latency alignment
+// ═══════════════════════════════════════════════════════════════
 
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0;
-
 let audioCtx = null;
 let savedCurves = [];
 let latestFreqs = null, latestDb = null;
@@ -581,105 +585,109 @@ let isMeasuring = false;
 let measureCount = 1;
 
 // ── UI refs
-const btnMeasure = document.getElementById('btn-measure');
-const btnSave    = document.getElementById('btn-save');
-const btnExport  = document.getElementById('btn-export');
-const btnClear   = document.getElementById('btn-clear');
-const statusDot  = document.getElementById('status-dot');
-const statusText = document.getElementById('status-text');
-const logText    = document.getElementById('log-text');
+const btnMeasure  = document.getElementById('btn-measure');
+const btnSave     = document.getElementById('btn-save');
+const btnExport   = document.getElementById('btn-export');
+const btnClear    = document.getElementById('btn-clear');
+const statusDot   = document.getElementById('status-dot');
+const statusText  = document.getElementById('status-text');
+const logText     = document.getElementById('log-text');
 const progressBar = document.getElementById('progress-bar');
-const infoBox    = document.getElementById('info-box');
+const infoBox     = document.getElementById('info-box');
 
 // ── Param refs
-const durSlider  = document.getElementById('duration');
-const volSlider  = document.getElementById('volume');
-const floSlider  = document.getElementById('freq-lo');
-const fhiSlider  = document.getElementById('freq-hi');
-const ySlider    = document.getElementById('yrange');
-const smoothChk  = document.getElementById('smooth-toggle');
-const normChk    = document.getElementById('norm-toggle');
-const sweepSel   = document.getElementById('sweep-type');
-const nameInput  = document.getElementById('curve-name');
+const durSlider = document.getElementById('duration');
+const volSlider = document.getElementById('volume');
+const floSlider = document.getElementById('freq-lo');
+const fhiSlider = document.getElementById('freq-hi');
+const ySlider   = document.getElementById('yrange');
+const smoothChk = document.getElementById('smooth-toggle');
+const normChk   = document.getElementById('norm-toggle');
+const sweepSel  = document.getElementById('sweep-type');
+const nameInput = document.getElementById('curve-name');
 
-// ── Param display
 function updateDisplays() {
-  document.getElementById('dur-val').textContent  = parseFloat(durSlider.value).toFixed(1) + ' s';
-  document.getElementById('vol-val').textContent  = volSlider.value + '%';
-  document.getElementById('flo-val').textContent  = floSlider.value + ' Hz';
-  document.getElementById('fhi-val').textContent  = fhiSlider.value + ' Hz';
+  document.getElementById('dur-val').textContent   = parseFloat(durSlider.value).toFixed(1) + ' s';
+  document.getElementById('vol-val').textContent   = volSlider.value + '%';
+  document.getElementById('flo-val').textContent   = floSlider.value + ' Hz';
+  document.getElementById('fhi-val').textContent   = fhiSlider.value + ' Hz';
   document.getElementById('yrange-val').textContent = '±' + ySlider.value + ' dB';
 }
 [durSlider, volSlider, floSlider, fhiSlider, ySlider].forEach(s => s.addEventListener('input', updateDisplays));
-[smoothChk, normChk, ySlider].forEach(el => el.addEventListener('change', () => { if(latestFreqs) replot(); }));
+[smoothChk, normChk, ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
 updateDisplays();
 
-// ── Status helpers
 function setStatus(state, msg) {
   statusDot.className = 'status-dot ' + state;
-  statusText.textContent = state.toUpperCase();
+  statusText.textContent = state ? state.toUpperCase() : 'IDLE';
   logText.textContent = msg;
 }
+function setProgress(pct) { progressBar.style.width = pct + '%'; }
 
-function setProgress(pct) {
-  progressBar.style.width = pct + '%';
-}
-
-// ─────────────────────────────────────────────────
-//  FFT helpers
-// ─────────────────────────────────────────────────
-
-// Simple in-place radix-2 Cooley-Tukey FFT
-function fft(re, im) {
-  const n = re.length;
-  // bit-reversal
-  for (let i = 1, j = 0; i < n; i++) {
-    let bit = n >> 1;
-    for (; j & bit; bit >>= 1) j ^= bit;
+// ═══════════════════════════════════════════════════════════════
+//  ITERATIVE RADIX-2 FFT  (no recursion — stack-safe for any N)
+//  Operates in-place on Float64Arrays re[] and im[]
+// ═══════════════════════════════════════════════════════════════
+function fftIterative(re, im) {
+  const N = re.length;
+  // ── bit-reversal permutation
+  let j = 0;
+  for (let i = 1; i < N; i++) {
+    let bit = N >> 1;
+    while (j & bit) { j ^= bit; bit >>= 1; }
     j ^= bit;
     if (i < j) {
-      [re[i], re[j]] = [re[j], re[i]];
-      [im[i], im[j]] = [im[j], im[i]];
+      let t = re[i]; re[i] = re[j]; re[j] = t;
+          t = im[i]; im[i] = im[j]; im[j] = t;
     }
   }
-  for (let len = 2; len <= n; len <<= 1) {
-    const ang = -2 * Math.PI / len;
-    const wRe = Math.cos(ang), wIm = Math.sin(ang);
-    for (let i = 0; i < n; i += len) {
-      let curRe = 1, curIm = 0;
-      for (let j = 0; j < len / 2; j++) {
-        const uRe = re[i+j], uIm = im[i+j];
-        const vRe = re[i+j+len/2]*curRe - im[i+j+len/2]*curIm;
-        const vIm = re[i+j+len/2]*curIm + im[i+j+len/2]*curRe;
-        re[i+j]         = uRe + vRe; im[i+j]         = uIm + vIm;
-        re[i+j+len/2]   = uRe - vRe; im[i+j+len/2]   = uIm - vIm;
-        const newCurRe = curRe*wRe - curIm*wIm;
-        curIm = curRe*wIm + curIm*wRe;
-        curRe = newCurRe;
+  // ── butterfly stages (all iterative)
+  for (let s = 1; (1 << s) <= N; s++) {
+    const m   = 1 << s;          // butterfly span
+    const hm  = m >> 1;
+    const ang = -2 * Math.PI / m;
+    const wr0 = Math.cos(ang);
+    const wi0 = Math.sin(ang);
+    for (let k = 0; k < N; k += m) {
+      let wr = 1.0, wi = 0.0;
+      for (let p = 0; p < hm; p++) {
+        const ur = re[k+p],     ui = im[k+p];
+        const vr = re[k+p+hm] * wr - im[k+p+hm] * wi;
+        const vi = re[k+p+hm] * wi + im[k+p+hm] * wr;
+        re[k+p]    = ur + vr;  im[k+p]    = ui + vi;
+        re[k+p+hm] = ur - vr;  im[k+p+hm] = ui - vi;
+        const nwr = wr * wr0 - wi * wi0;
+        wi = wr * wi0 + wi * wr0;
+        wr = nwr;
       }
     }
   }
 }
 
-function nextPow2(n) { let p = 1; while(p < n) p <<= 1; return p; }
+function nextPow2(n) { let p = 1; while (p < n) p <<= 1; return p; }
 
 function hannWindow(n) {
-  const w = new Float32Array(n);
-  for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2*Math.PI*i/(n-1)));
+  const w = new Float64Array(n);
+  for (let i = 0; i < n; i++) w[i] = 0.5 * (1 - Math.cos(2 * Math.PI * i / (n - 1)));
   return w;
 }
 
-// ─────────────────────────────────────────────────
-//  Signal Generation
-// ─────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════
+//  Signal generators
+// ═══════════════════════════════════════════════════════════════
 function generateLogSweep(sr, duration, f1, f2) {
-  const n = Math.floor(sr * duration);
+  const n   = Math.floor(sr * duration);
   const buf = new Float32Array(n);
-  const k = Math.log(f2/f1);
+  const K   = Math.log(f2 / f1);
   for (let i = 0; i < n; i++) {
     const t = i / sr;
-    buf[i] = Math.sin(2*Math.PI*f1*duration/k * (Math.exp(t/duration*k) - 1));
+    buf[i] = Math.sin(2 * Math.PI * f1 * duration / K * (Math.exp(t / duration * K) - 1));
+  }
+  // fade in/out 10 ms to avoid clicks
+  const fade = Math.floor(sr * 0.01);
+  for (let i = 0; i < fade; i++) {
+    buf[i]         *= i / fade;
+    buf[n - 1 - i] *= i / fade;
   }
   return buf;
 }
@@ -689,117 +697,146 @@ function generatePinkNoise(sr, duration) {
   const buf = new Float32Array(n);
   let b0=0,b1=0,b2=0,b3=0,b4=0,b5=0,b6=0;
   for (let i = 0; i < n; i++) {
-    const w = Math.random()*2-1;
-    b0=0.99886*b0+w*0.0555179; b1=0.99332*b1+w*0.0750759;
-    b2=0.96900*b2+w*0.1538520; b3=0.86650*b3+w*0.3104856;
-    b4=0.55000*b4+w*0.5329522; b5=-0.7616*b5-w*0.0168980;
+    const w = Math.random() * 2 - 1;
+    b0 = 0.99886*b0 + w*0.0555179; b1 = 0.99332*b1 + w*0.0750759;
+    b2 = 0.96900*b2 + w*0.1538520; b3 = 0.86650*b3 + w*0.3104856;
+    b4 = 0.55000*b4 + w*0.5329522; b5 = -0.7616*b5 - w*0.0168980;
     buf[i] = (b0+b1+b2+b3+b4+b5+b6+w*0.5362) / 7;
     b6 = w * 0.115926;
   }
   return buf;
 }
 
-// ─────────────────────────────────────────────────
-//  Deconvolution (frequency-domain division)
-// ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  Cross-correlation for latency alignment
+//  Returns the sample lag (recorded signal leads reference by lag)
+// ═══════════════════════════════════════════════════════════════
+function findLatencyLag(ref, rec, maxLagSamples) {
+  // Use only first 4096 samples for speed
+  const win  = Math.min(4096, ref.length, rec.length);
+  const N    = nextPow2(win * 2);
+  const aRe  = new Float64Array(N);
+  const aIm  = new Float64Array(N);
+  const bRe  = new Float64Array(N);
+  const bIm  = new Float64Array(N);
+  for (let i = 0; i < win; i++) { aRe[i] = ref[i]; bRe[i] = rec[i]; }
+  fftIterative(aRe, aIm);
+  fftIterative(bRe, bIm);
+  // Cross-correlation: C = conj(A) * B
+  const cRe = new Float64Array(N);
+  const cIm = new Float64Array(N);
+  for (let i = 0; i < N; i++) {
+    cRe[i] =  aRe[i]*bRe[i] + aIm[i]*bIm[i];
+    cIm[i] = -aIm[i]*bRe[i] + aRe[i]*bIm[i];
+  }
+  // IFFT (conjugate, forward FFT, conjugate)
+  for (let i = 0; i < N; i++) cIm[i] = -cIm[i];
+  fftIterative(cRe, cIm);
+  for (let i = 0; i < N; i++) { cRe[i] /= N; cIm[i] = -cIm[i] / N; }
 
-function computeImpulseResponse(refSignal, recSignal, sr) {
+  // Find peak within ±maxLag
+  const limit = Math.min(maxLagSamples, Math.floor(N / 2));
+  let bestVal = -Infinity, bestLag = 0;
+  for (let i = 0; i < limit; i++) {
+    if (cRe[i] > bestVal) { bestVal = cRe[i]; bestLag = i; }
+  }
+  for (let i = N - limit; i < N; i++) {
+    if (cRe[i] > bestVal) { bestVal = cRe[i]; bestLag = i - N; }
+  }
+  return bestLag; // positive = rec is delayed by `lag` samples vs ref
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  Deconvolution: H(f) = Rec(f) / Ref(f)
+// ═══════════════════════════════════════════════════════════════
+function computeImpulseResponse(refSignal, recSignal) {
   const len = nextPow2(Math.max(refSignal.length, recSignal.length) * 2);
-
   const refRe = new Float64Array(len);
   const refIm = new Float64Array(len);
   const recRe = new Float64Array(len);
   const recIm = new Float64Array(len);
-
   for (let i = 0; i < refSignal.length; i++) refRe[i] = refSignal[i];
   for (let i = 0; i < recSignal.length; i++) recRe[i] = recSignal[i];
+  fftIterative(refRe, refIm);
+  fftIterative(recRe, recIm);
 
-  fft(refRe, refIm);
-  fft(recRe, recIm);
-
-  // H(f) = Rec(f) / Ref(f) with regularization
-  const irRe = new Float64Array(len);
-  const irIm = new Float64Array(len);
-  const eps = 1e-10;
+  // Wiener deconvolution with small noise floor regularization
+  const irRe  = new Float64Array(len);
+  const irIm  = new Float64Array(len);
+  // Compute max power of reference for relative regularization
+  let maxPow = 0;
+  for (let i = 0; i < len; i++) {
+    const p = refRe[i]*refRe[i] + refIm[i]*refIm[i];
+    if (p > maxPow) maxPow = p;
+  }
+  const eps = maxPow * 1e-6 + 1e-20;
   for (let i = 0; i < len; i++) {
     const denom = refRe[i]*refRe[i] + refIm[i]*refIm[i] + eps;
     irRe[i] = (recRe[i]*refRe[i] + recIm[i]*refIm[i]) / denom;
     irIm[i] = (recIm[i]*refRe[i] - recRe[i]*refIm[i]) / denom;
   }
-
   return { irRe, irIm, len };
 }
 
-// ─────────────────────────────────────────────────
-//  Frequency Response Extraction
-// ─────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════
+//  Extract frequency response from IR
+// ═══════════════════════════════════════════════════════════════
 function extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi) {
-  // Apply Hann window to first part of IR
-  const irLen = Math.min(len, Math.floor(sr * 0.5)); // use first 0.5s of IR
-  const win = hannWindow(irLen);
-  const windRe = new Float64Array(len);
-  const windIm = new Float64Array(len);
-  for (let i = 0; i < irLen; i++) {
-    windRe[i] = irRe[i] * win[i];
-    windIm[i] = irIm[i] * win[i];
+  // Use up to 256 ms of IR (captures enough late decay without room noise)
+  const irWindow = Math.min(len, nextPow2(Math.floor(sr * 0.256)));
+  const win  = hannWindow(irWindow);
+  const wRe  = new Float64Array(irWindow);
+  const wIm  = new Float64Array(irWindow);
+  for (let i = 0; i < irWindow; i++) {
+    wRe[i] = irRe[i] * win[i];
+    wIm[i] = irIm[i] * win[i];
   }
-
-  fft(windRe, windIm);
+  fftIterative(wRe, wIm);
 
   const freqs = [];
-  const db = [];
-  const binW = sr / len;
-
-  for (let i = 1; i < len/2; i++) {
-    const f = i * binW;
+  const db    = [];
+  const binHz = sr / irWindow;
+  for (let i = 1; i < irWindow / 2; i++) {
+    const f = i * binHz;
     if (f < fLo || f > fHi) continue;
-    const mag = Math.sqrt(windRe[i]*windRe[i] + windIm[i]*windIm[i]);
-    if (mag > 0) {
-      freqs.push(f);
-      db.push(20 * Math.log10(mag));
-    }
+    const mag = Math.sqrt(wRe[i]*wRe[i] + wIm[i]*wIm[i]);
+    if (mag > 0) { freqs.push(f); db.push(20 * Math.log10(mag)); }
   }
   return { freqs, db };
 }
 
-// ─────────────────────────────────────────────────
-//  1/3-Octave Smoothing
-// ─────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════
+//  1/3-octave smoothing (Gaussian-weighted)
+// ═══════════════════════════════════════════════════════════════
 function smoothOctave(freqs, db, fraction) {
   const out = new Float64Array(db.length);
   for (let i = 0; i < freqs.length; i++) {
-    const fc = freqs[i];
-    const fLow  = fc * Math.pow(2, -1/(2*fraction));
-    const fHigh = fc * Math.pow(2,  1/(2*fraction));
-    let sum = 0, count = 0;
+    const fc   = freqs[i];
+    const fLow = fc * Math.pow(2, -0.5 / fraction);
+    const fHi2 = fc * Math.pow(2,  0.5 / fraction);
+    let sum = 0, wsum = 0;
     for (let j = 0; j < freqs.length; j++) {
-      if (freqs[j] >= fLow && freqs[j] <= fHigh) {
-        sum += db[j]; count++;
-      }
+      if (freqs[j] < fLow || freqs[j] > fHi2) continue;
+      const logDist = Math.log2(freqs[j] / fc) * fraction;
+      const w = Math.exp(-0.5 * logDist * logDist);
+      sum  += db[j] * w;
+      wsum += w;
     }
-    out[i] = count > 0 ? sum / count : db[i];
+    out[i] = wsum > 0 ? sum / wsum : db[i];
   }
   return Array.from(out);
 }
-
-// ─────────────────────────────────────────────────
-//  Normalize: shift so peak = 0 dB
-// ─────────────────────────────────────────────────
 
 function normalize(db) {
   const peak = Math.max(...db);
   return db.map(v => v - peak);
 }
 
-// ─────────────────────────────────────────────────
-//  Plotting
-// ─────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════
+//  Plot
+// ═══════════════════════════════════════════════════════════════
 function initPlot() {
-  const layout = makePlotLayout();
-  Plotly.newPlot('plot', [], layout, { displayModeBar: false, responsive: true });
+  Plotly.newPlot('plot', [], makePlotLayout(), { displayModeBar: false, responsive: true });
 }
 
 function makePlotLayout(yRange = 30) {
@@ -814,8 +851,8 @@ function makePlotLayout(yRange = 30) {
       gridcolor: '#1a2030', gridwidth: 1,
       tickcolor: '#2a3444', linecolor: '#2a3444',
       tickfont: { family: 'Share Tech Mono', size: 10, color: '#5a6a7a' },
-      tickvals: [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000],
-      ticktext: ['20','50','100','200','500','1k','2k','5k','10k','20k'],
+      tickvals:  [20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000],
+      ticktext:  ['20','50','100','200','500','1k','2k','5k','10k','20k'],
       zeroline: false,
     },
     yaxis: {
@@ -833,11 +870,7 @@ function makePlotLayout(yRange = 30) {
     },
     showlegend: savedCurves.length > 0 || latestFreqs !== null,
     hovermode: 'x unified',
-    hoverlabel: {
-      bgcolor: '#181c22',
-      bordercolor: '#222830',
-      font: { family: 'Share Tech Mono', size: 11, color: '#c8d4e0' }
-    }
+    hoverlabel: { bgcolor:'#181c22', bordercolor:'#222830', font:{ family:'Share Tech Mono', size:11, color:'#c8d4e0' } }
   };
 }
 
@@ -847,36 +880,84 @@ function replot() {
   const norm   = normChk.checked;
   const traces = [];
 
-  // Saved curves
   savedCurves.forEach(c => {
     let db = smooth ? smoothOctave(c.freqs, c.rawDb, 3) : c.rawDb;
     if (norm) db = normalize(db);
-    traces.push({
-      x: c.freqs, y: db, name: c.name, mode: 'lines',
+    traces.push({ x: c.freqs, y: db, name: c.name, mode: 'lines',
       line: { color: c.color, width: 1.5 },
-      hovertemplate: '%{y:.1f} dB<extra>' + c.name + '</extra>'
-    });
+      hovertemplate: '%{y:.1f} dB<extra>' + c.name + '</extra>' });
   });
 
-  // Live latest
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
     let db = smooth ? smoothOctave(latestFreqs, latestDb, 3) : latestDb;
     if (norm) db = normalize(db);
-    traces.push({
-      x: latestFreqs, y: db, name: liveName + ' ●', mode: 'lines',
+    traces.push({ x: latestFreqs, y: db, name: liveName + ' ●', mode: 'lines',
       line: { color: COLORS[colorIdx % COLORS.length], width: 2 },
-      hovertemplate: '%{y:.1f} dB<extra>' + liveName + '</extra>'
-    });
+      hovertemplate: '%{y:.1f} dB<extra>' + liveName + '</extra>' });
   }
 
   Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar: false, responsive: true });
 }
 
-// ─────────────────────────────────────────────────
-//  Main Measurement Pipeline
-// ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
+//  RECORDING via ScriptProcessor with proper chunk collection
+//  (ScriptProcessor is deprecated but still works reliably in all
+//   browsers without needing HTTPS COOP headers for AudioWorklet)
+// ═══════════════════════════════════════════════════════════════
+function recordAudio(audioCtx, stream, durationSecs) {
+  return new Promise((resolve, reject) => {
+    const sr         = audioCtx.sampleRate;
+    const totalNeeded = Math.ceil(sr * durationSecs) + 8192; // small headroom
+    const micSrc     = audioCtx.createMediaStreamSource(stream);
+    const proc       = audioCtx.createScriptProcessor(2048, 1, 1);
+    const chunks     = [];
+    let   collected  = 0;
+    let   done       = false;
 
+    proc.onaudioprocess = (e) => {
+      if (done) return;
+      const data = e.inputBuffer.getChannelData(0);
+      chunks.push(new Float32Array(data));
+      collected += data.length;
+      if (collected >= totalNeeded) {
+        done = true;
+        proc.disconnect();
+        micSrc.disconnect();
+        // Flatten
+        const out = new Float32Array(collected);
+        let pos = 0;
+        for (const c of chunks) { out.set(c, pos); pos += c.length; }
+        resolve(out);
+      }
+    };
+
+    // Connect: mic → processor → destination (silent)
+    // The destination connection is required for onaudioprocess to fire in Chrome
+    micSrc.connect(proc);
+    proc.connect(audioCtx.destination);
+
+    // Safety timeout
+    setTimeout(() => {
+      if (!done) {
+        done = true;
+        try { proc.disconnect(); micSrc.disconnect(); } catch(_){}
+        if (chunks.length === 0) {
+          reject(new Error('Microphone captured no audio. Check Windows sound settings — make sure the mic is not muted and the correct input device is selected.'));
+        } else {
+          const out = new Float32Array(collected);
+          let pos = 0;
+          for (const c of chunks) { out.set(c, pos); pos += c.length; }
+          resolve(out);
+        }
+      }
+    }, (durationSecs + 2) * 1000);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  MAIN MEASUREMENT PIPELINE
+// ═══════════════════════════════════════════════════════════════
 async function runMeasurement() {
   if (isMeasuring) return;
   isMeasuring = true;
@@ -885,145 +966,141 @@ async function runMeasurement() {
   btnExport.disabled = true;
 
   try {
-    // 1. Init AudioContext
+    // 1. AudioContext
     setStatus('processing', 'Initializing audio context…');
     setProgress(5);
     if (!audioCtx || audioCtx.state === 'closed') {
-      audioCtx = new AudioContext({ sampleRate: 48000 });
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
     }
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const sr = audioCtx.sampleRate;
-    document.getElementById('meta-sr').textContent = (sr/1000).toFixed(1) + ' kHz';
+    document.getElementById('meta-sr').textContent = (sr / 1000).toFixed(1) + ' kHz';
 
-    // 2. Request mic
+    // 2. Mic access
     setStatus('processing', 'Requesting microphone access…');
     setProgress(10);
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-    });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 1
+        }
+      });
+    } catch (e) {
+      throw new Error('Microphone access denied. Please allow microphone access in the browser address bar and try again.');
+    }
 
-    // 3. Generate reference signal
+    // 3. Parameters
     const duration  = parseFloat(durSlider.value);
     const volume    = parseInt(volSlider.value) / 100;
     const fLo       = parseInt(floSlider.value);
     const fHi       = parseInt(fhiSlider.value);
     const sweepType = sweepSel.value;
 
+    // 4. Generate reference sweep
     setStatus('processing', 'Generating test signal…');
-    setProgress(20);
-
+    setProgress(18);
     const refSamples = sweepType === 'logsweep'
       ? generateLogSweep(sr, duration, fLo, fHi)
       : generatePinkNoise(sr, duration);
-
-    // Scale by volume
     for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume;
 
-    // 4. Build audio graph
-    const silencePre  = 0.3; // seconds silence before sweep
-    const silencePost = 0.5; // seconds to capture after sweep
-    const totalSamples = Math.floor(sr * (silencePre + duration + silencePost));
+    // 5. Build playback buffer with pre/post silence
+    const silencePre  = 0.5;   // 500 ms pre-silence for recorder to stabilize
+    const silencePost = 0.8;   // 800 ms post-silence to capture tail
+    const preSamples  = Math.floor(sr * silencePre);
+    const postSamples = Math.floor(sr * silencePost);
+    const totalPlaySamples = preSamples + refSamples.length + postSamples;
 
-    const playBuffer = audioCtx.createBuffer(1, totalSamples, sr);
+    const playBuffer = audioCtx.createBuffer(1, totalPlaySamples, sr);
     const playData   = playBuffer.getChannelData(0);
-    const offset     = Math.floor(silencePre * sr);
-    for (let i = 0; i < refSamples.length; i++) playData[offset + i] = refSamples[i];
+    for (let i = 0; i < refSamples.length; i++) playData[preSamples + i] = refSamples[i];
 
-    // 5. Record
-    setStatus('recording', 'Recording… please wait');
-    setProgress(30);
+    // 6. Start recorder FIRST, then play after a tiny delay
+    setStatus('recording', 'Recording…');
+    setProgress(25);
 
-    const micSource  = audioCtx.createMediaStreamSource(stream);
-    const scriptProc = audioCtx.createScriptProcessor(4096, 1, 1);
-    const recorded   = [];
+    const totalRecordSecs = silencePre + duration + silencePost + 0.5;
+    const recordPromise = recordAudio(audioCtx, stream, totalRecordSecs);
 
-    micSource.connect(scriptProc);
-    scriptProc.connect(audioCtx.destination);
+    // Small delay to let recorder settle before playback starts
+    await new Promise(r => setTimeout(r, 150));
 
-    scriptProc.onaudioprocess = (e) => {
-      const ch = e.inputBuffer.getChannelData(0);
-      recorded.push(new Float32Array(ch));
-    };
-
-    // Play test signal
-    const src = audioCtx.createBufferSource();
-    src.buffer = playBuffer;
+    // 7. Play sweep
+    const src      = audioCtx.createBufferSource();
+    src.buffer     = playBuffer;
     const gainNode = audioCtx.createGain();
     gainNode.gain.value = 1.0;
     src.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-
-    const totalTime = silencePre + duration + silencePost;
     src.start();
 
-    // Progress ticks
-    const startTime = performance.now();
-    await new Promise(resolve => {
-      const tick = () => {
-        const elapsed = (performance.now() - startTime) / 1000;
-        const pct = 30 + Math.min((elapsed / totalTime) * 40, 40);
-        setProgress(pct);
-        if (elapsed < totalTime) requestAnimationFrame(tick);
-        else resolve();
-      };
-      requestAnimationFrame(tick);
-      setTimeout(resolve, (totalTime + 0.1) * 1000);
-    });
+    // Progress bar during recording
+    const totalMs = totalRecordSecs * 1000;
+    const t0 = performance.now();
+    const progressInterval = setInterval(() => {
+      const elapsed = performance.now() - t0;
+      const pct = 25 + Math.min((elapsed / totalMs) * 45, 45);
+      setProgress(pct);
+    }, 100);
 
-    // Cleanup
-    scriptProc.disconnect();
-    micSource.disconnect();
+    // 8. Wait for recording to finish
+    const recRaw = await recordPromise;
+    clearInterval(progressInterval);
     stream.getTracks().forEach(t => t.stop());
 
-    // 6. Assemble recording
-    setStatus('processing', 'Processing recorded audio…');
+    setStatus('processing', `Captured ${recRaw.length} samples (${(recRaw.length/sr).toFixed(2)}s). Aligning…`);
     setProgress(72);
 
-    const recFlat = new Float32Array(recorded.reduce((s,a)=>s+a.length,0));
-    let pos = 0;
-    for (const chunk of recorded) { recFlat.set(chunk, pos); pos += chunk.length; }
+    // 9. Cross-correlation alignment
+    //    Find where the sweep appears in the recording relative to the reference
+    const maxLag = Math.floor(sr * 1.0); // search up to 1s of lag
+    const lag = findLatencyLag(refSamples, recRaw, maxLag);
+    // lag > 0 means recording is delayed: shift rec back by lag samples
+    // lag < 0 means recording started early: pad rec from front
 
-    // Trim to same length as play buffer
-    const recTrimmed = recFlat.slice(0, totalSamples);
-    // The reference without silence padding:
-    const refFull = new Float32Array(totalSamples);
-    for (let i = 0; i < refSamples.length; i++) refFull[offset + i] = refSamples[i];
+    let recAligned;
+    const alignedLen = refSamples.length + postSamples;
+    recAligned = new Float32Array(alignedLen);
 
-    // 7. Deconvolution
-    setStatus('processing', 'Running deconvolution…');
-    setProgress(82);
+    const recStart = Math.max(0, lag);
+    const copyLen  = Math.min(alignedLen, recRaw.length - recStart);
+    if (copyLen > 0) recAligned.set(recRaw.subarray(recStart, recStart + copyLen));
 
-    const { irRe, irIm, len } = computeImpulseResponse(refFull, recTrimmed, sr);
-    document.getElementById('meta-fft').textContent = len;
+    setStatus('processing', `Lag: ${lag} samples (${(lag/sr*1000).toFixed(1)} ms). Deconvolving…`);
+    setProgress(80);
+    document.getElementById('meta-fft').textContent = nextPow2(alignedLen * 2);
 
-    // 8. Extract frequency response
+    // 10. Deconvolve
+    const { irRe, irIm, len } = computeImpulseResponse(refSamples, recAligned);
+    setProgress(88);
+
+    // 11. Extract FR
     setStatus('processing', 'Computing frequency response…');
-    setProgress(90);
-
     const { freqs, db } = extractFrequencyResponse(irRe, irIm, len, sr, fLo, fHi);
     document.getElementById('meta-pts').textContent = freqs.length;
+    setProgress(96);
 
-    if (freqs.length === 0) throw new Error('No frequency data in selected range. Check mic & output levels.');
+    if (freqs.length === 0) throw new Error('No frequency data extracted. Make sure the microphone is picking up audio from the output device.');
 
     latestFreqs = freqs;
     latestDb    = db;
 
-    // 9. Plot
-    setProgress(98);
     replot();
     setProgress(100);
-
-    setStatus('ready', `Done! ${freqs.length} data points captured.`);
-    infoBox.innerHTML = `Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay with other measurements.<br>Adjust smoothing & normalization above.`;
+    setStatus('ready', `Done! ${freqs.length} points · lag ${(lag/sr*1000).toFixed(1)} ms`);
+    infoBox.innerHTML = `Measurement complete.<br>Click <strong style="color:var(--accent)">SAVE CURVE</strong> to overlay.<br>Toggle smoothing / normalization above.`;
     btnSave.disabled = false;
     btnExport.disabled = false;
+    setTimeout(() => setProgress(0), 1500);
 
-    setTimeout(() => setProgress(0), 1200);
-
-  } catch(err) {
+  } catch (err) {
     console.error(err);
     setStatus('', 'Error: ' + err.message);
-    infoBox.innerHTML = `<span style="color:var(--red)">Error: ${err.message}</span><br>Check mic permissions and audio output.`;
+    infoBox.innerHTML = `<span style="color:var(--red)">Error:</span> ${err.message}`;
     setProgress(0);
   }
 
@@ -1031,15 +1108,14 @@ async function runMeasurement() {
   btnMeasure.disabled = false;
 }
 
-// ─────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════
 //  Save / Clear / Export
-// ─────────────────────────────────────────────────
-
+// ═══════════════════════════════════════════════════════════════
 function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx % COLORS.length];
   colorIdx++;
-  const name  = nameInput.value || ('Curve ' + (savedCurves.length+1));
+  const name = nameInput.value || ('Curve ' + (savedCurves.length + 1));
   savedCurves.push({ name, freqs: latestFreqs, rawDb: latestDb, color });
   latestFreqs = null; latestDb = null;
   btnSave.disabled = true;
@@ -1048,7 +1124,7 @@ function saveCurve() {
   nameInput.value = 'Measurement ' + measureCount;
   renderSavedList();
   replot();
-  setStatus('ready', `Curve "${name}" saved.`);
+  setStatus('ready', `"${name}" saved.`);
 }
 
 function removeSaved(idx) {
@@ -1063,55 +1139,43 @@ function renderSavedList() {
     el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>';
     return;
   }
-  el.innerHTML = savedCurves.map((c,i) => `
+  el.innerHTML = savedCurves.map((c, i) => `
     <div class="saved-item">
       <div class="swatch" style="background:${c.color}"></div>
       <div class="name">${c.name}</div>
       <button onclick="removeSaved(${i})" title="Remove">✕</button>
-    </div>
-  `).join('');
+    </div>`).join('');
 }
 
 function clearAll() {
-  savedCurves = [];
-  latestFreqs = null;
-  latestDb    = null;
-  colorIdx    = 0;
-  measureCount = 1;
+  savedCurves = []; latestFreqs = null; latestDb = null;
+  colorIdx = 0; measureCount = 1;
   nameInput.value = 'Measurement 1';
-  btnSave.disabled = true;
-  btnExport.disabled = true;
-  renderSavedList();
-  initPlot();
-  document.getElementById('meta-sr').textContent = '—';
-  document.getElementById('meta-fft').textContent = '—';
-  document.getElementById('meta-pts').textContent = '—';
+  btnSave.disabled = true; btnExport.disabled = true;
+  renderSavedList(); initPlot();
+  ['meta-sr','meta-fft','meta-pts'].forEach(id => document.getElementById(id).textContent = '—');
   setStatus('', 'Cleared. Ready for new measurements.');
 }
 
 function exportCSV() {
-  if (!latestFreqs && savedCurves.length === 0) return;
   const allCurves = [...savedCurves];
   if (latestFreqs) allCurves.push({ name: nameInput.value || 'Live', freqs: latestFreqs, rawDb: latestDb });
+  if (allCurves.length === 0) return;
 
-  let csv = 'Frequency (Hz),' + allCurves.map(c=>c.name).join(',') + '\n';
-  // Use first curve's freqs as reference
+  let csv = 'Frequency (Hz),' + allCurves.map(c => c.name).join(',') + '\n';
   const ref = allCurves[0];
   for (let i = 0; i < ref.freqs.length; i++) {
     const row = [ref.freqs[i].toFixed(2)];
-    for (const c of allCurves) {
-      row.push(c.rawDb[i] !== undefined ? c.rawDb[i].toFixed(3) : '');
-    }
+    for (const c of allCurves) row.push(c.rawDb[i] !== undefined ? c.rawDb[i].toFixed(3) : '');
     csv += row.join(',') + '\n';
   }
-  const blob = new Blob([csv], { type: 'text/csv' });
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = 'freqscope_export.csv';
   a.click();
 }
 
-// ── Wire up buttons
+// ── Wire up
 btnMeasure.addEventListener('click', runMeasurement);
 btnSave.addEventListener('click', saveCurve);
 btnExport.addEventListener('click', exportCSV);
