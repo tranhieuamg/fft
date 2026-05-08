@@ -702,7 +702,7 @@ function makePlotLayout(yRange=30) {
 function normalize(freqs, db) {
     let maxVal = -Infinity;
     for (let i = 0; i < freqs.length; i++) {
-        if (freqs[i] >= 200 && freqs[i] <= 10000 && db[i] > maxVal)
+        if (freqs[i] >= 50 && freqs[i] <= 15000 && db[i] > maxVal)
             maxVal = db[i];
     }
     if (maxVal === -Infinity) maxVal = Math.max(...db); // fallback
