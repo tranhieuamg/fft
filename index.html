@@ -699,10 +699,14 @@ function makePlotLayout(yRange=30) {
   };
 }
 
-function normalize(db) { 
-  let maxVal = -Infinity;
-  for (let i = 0; i < db.length; i++) if (db[i] > maxVal) maxVal = db[i];
-  return db.map(v => v - maxVal); 
+function normalize(freqs, db) {
+    let maxVal = -Infinity;
+    for (let i = 0; i < freqs.length; i++) {
+        if (freqs[i] >= 200 && freqs[i] <= 10000 && db[i] > maxVal)
+            maxVal = db[i];
+    }
+    if (maxVal === -Infinity) maxVal = Math.max(...db); // fallback
+    return db.map(v => v - maxVal);
 }
 
 function replot() {
@@ -712,7 +716,7 @@ function replot() {
 
   savedCurves.forEach(c => {
     let db = c.rawDb;
-    if (useNorm) db = normalize(db);
+    if (useNorm) db = normalize(c.freqs, db);
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -721,7 +725,7 @@ function replot() {
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
     let db = latestDb;
-    if (useNorm) db = normalize(db);
+    if (useNorm) db = normalize(latestFreqs, db);
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
