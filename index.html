@@ -115,6 +115,33 @@
                color:var(--border); letter-spacing:2px; pointer-events:none; user-select:none; }
   ::-webkit-scrollbar { width:4px; }
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+/* Mobile and Tablet Adaptation */
+  @media (max-width: 900px) {
+    main { 
+      display: flex; 
+      flex-direction: column; 
+    }
+    .sidebar { 
+      border-right: none; 
+      border-bottom: 1px solid var(--border); 
+      max-height: 45vh; /* Keeps controls scrollable on the top half of the screen */
+    }
+    header { 
+      padding: 12px 16px; 
+    }
+    .chart-area {
+      padding: 16px;
+    }
+    #plot { 
+      min-height: 400px; 
+    }
+    
+    /* Enlarges slider thumbs for easier touch interaction on Android */
+    input[type=range]::-webkit-slider-thumb {
+      width: 24px; 
+      height: 24px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -762,7 +789,8 @@ savedCurves.forEach(c => {
   });
 
 if (latestFreqs) {
-    let db = latestDb.slice();
+    const liveName = nameInput.value || 'Live';
+	let db = latestDb.slice();
     if (liveOffset) db = db.map(v => v + liveOffset);       // ← offset FIRST
     if (useNorm) db = normalize(latestFreqs, db);            // ← normalize (raw+offset)
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
