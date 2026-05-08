@@ -752,20 +752,19 @@ function replot() {
   const useNorm   = normChk.checked;
   const traces = [];
 
-  savedCurves.forEach(c => {
+savedCurves.forEach(c => {
     let db = c.rawDb.slice();
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);
-    if (c.offset) db = db.map(v => v + c.offset);
+    if (c.offset) db = db.map(v => v + c.offset);           // ← offset FIRST
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);  // ← normalize (raw+offset)
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
   });
 
-  if (latestFreqs) {
-    const liveName = nameInput.value || 'Live';
+if (latestFreqs) {
     let db = latestDb.slice();
-    if (useNorm) db = normalize(latestFreqs, db);
-    if (liveOffset) db = db.map(v => v + liveOffset);
+    if (liveOffset) db = db.map(v => v + liveOffset);       // ← offset FIRST
+    if (useNorm) db = normalize(latestFreqs, db);            // ← normalize (raw+offset)
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
@@ -1042,14 +1041,14 @@ function exportCSV() {
   const all = [];
   savedCurves.forEach(c => {
       let db = c.rawDb.slice();
-      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
       if (c.offset) db = db.map(v => v + c.offset);
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
       all.push({ name: c.name, freqs: c.freqs, db: db });
   });
   if (latestFreqs) {
       let db = latestDb.slice();
-      if (useNorm) db = normalize(latestFreqs, db);
       if (liveOffset) db = db.map(v => v + liveOffset);
+      if (useNorm) db = normalize(latestFreqs, db);
       all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
   }
 
