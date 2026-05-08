@@ -122,7 +122,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">Pro Fidelity Edition</span>
+    <span class="logo-tag">DC Block & Pad Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -240,7 +240,7 @@
       </div>
     </div>
     <div id="plot"></div>
-    <div class="watermark">FREQSCOPE v1.8</div>
+    <div class="watermark">FREQSCOPE v1.9</div>
   </div>
 </main>
 
@@ -252,12 +252,13 @@
 
 <script>
 // ===================================================================
-//  FreqScope v1.8
+//  FreqScope v1.9
 //  CHANGES:
-//   - WINDOWING FIX: Replaced flat-top Tukey window with an Asymmetric 
-//     Right-Half-Hann Window. This mirrors ARTA perfectly, tapering the
-//     IR tail smoothly to 0 across 500ms. This prevents ambient noise 
-//     from leaking into the FFT, eliminating bass jitter below 500Hz.
+//   - DC OFFSET FIX: Subtracted mean from recorded signal to prevent 
+//     1/f spectral leakage from corrupting the <100Hz range.
+//   - SWEEP PADDING: Generates log sweeps starting 2 octaves below UI 
+//     limit (e.g. 5Hz) to prevent Gibbs start-up ripples near 20Hz.
+//   - EXTENDED IR: Lengthened the Right-Half-Hann window to 1000ms.
 // ===================================================================
 
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
@@ -439,10 +440,10 @@ function extractFR(ir, len, sr, fLo, fHi) {
     if (a > peakVal) { peakVal = a; peakIdx = i; }
   }
 
-  // Asymmetric Window Parameters (Matches ARTA Right Window)
-  const preSamples = Math.floor(sr * 0.005);   // 5ms smooth fade in
-  const postFlat   = Math.floor(sr * 0.002);   // 2ms flat top at peak
-  const decaySamples = Math.floor(sr * 0.500); // 500ms smooth Hann decay
+  // Asymmetric Window Parameters
+  const preSamples = Math.floor(sr * 0.010);   // 10ms smooth fade in
+  const postFlat   = Math.floor(sr * 0.020);   // 20ms flat top at peak
+  const decaySamples = Math.floor(sr * 1.000); // 1000ms long decay for pure sub-bass
   
   let startIdx = peakIdx - preSamples;
   let actualPre = preSamples;
@@ -459,14 +460,12 @@ function extractFR(ir, len, sr, fLo, fHi) {
     let val = (startIdx + i < len) ? ir[startIdx + i] : 0;
     
     if (i < actualPre) {
-      // 1. Fade in (Rising curve)
       val *= 0.5 * (1 - Math.cos(Math.PI * i / actualPre)); 
     } 
     else if (i >= actualPre && i < actualPre + postFlat) {
-      // 2. Flat top (Leaves peak completely untouched)
+      // flat top
     } 
     else if (i >= actualPre + postFlat && i < actualPre + postFlat + decaySamples) {
-      // 3. Graceful tail taper (Smashes mic background noise smoothly)
       const decayIdx = i - (actualPre + postFlat);
       val *= 0.5 * (1 + Math.cos(Math.PI * decayIdx / decaySamples)); 
     } 
@@ -484,7 +483,7 @@ function extractFR(ir, len, sr, fLo, fHi) {
   
   for (let i = 1; i < N / 2; i++) {
     const f = i * binHz;
-    if (f < fLo * 0.5 || f > maxSafeF) continue;
+    if (f < fLo || f > maxSafeF) continue; // Filter tightly to user bounds
     
     const mag = Math.sqrt(wRe[i]*wRe[i] + wIm[i]*wIm[i]);
     if (mag > 1e-30) { 
@@ -547,7 +546,7 @@ self.onmessage = function(e) {
   self.postMessage({ type:'progress', pct:20, msg:'Deconvolving...' });
   const { ir, len } = deconvolve(ref, rec);
 
-  self.postMessage({ type:'progress', pct:50, msg:'Applying Right-Half-Hann Asymmetric Window...' });
+  self.postMessage({ type:'progress', pct:50, msg:'Applying 1000ms Asymmetric Gate...' });
   const { rawFreqs, rawDb, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
 
   self.postMessage({ type:'progress', pct:80, msg:'Smoothing data...' });
@@ -581,8 +580,15 @@ function generateLogSweep(sr, dur, f1, f2) {
     const t = i / sr;
     buf[i] = Math.sin(2 * Math.PI * f1 * dur / K * (Math.exp(t / dur * K) - 1));
   }
-  const fade = Math.floor(sr * 0.01);
-  for (let i = 0; i < fade; i++) { buf[i] *= i/fade; buf[n-1-i] *= i/fade; }
+  // Fade in over 1 full cycle of the starting frequency to avoid startup clicks
+  const fade_in = Math.min(Math.floor(sr / f1), Math.floor(n * 0.1));
+  for (let i = 0; i < fade_in; i++) {
+      buf[i] *= 0.5 * (1 - Math.cos(Math.PI * i / fade_in));
+  }
+  const fade_out = Math.floor(sr * 0.005);
+  for (let i = 0; i < fade_out; i++) {
+      buf[n - 1 - i] *= 0.5 * (1 - Math.cos(Math.PI * i / fade_out));
+  }
   return buf;
 }
 
@@ -597,6 +603,12 @@ function generatePinkNoise(sr, dur) {
     b4=0.55000*b4+w*0.5329522; b5=-0.7616*b5-w*0.0168980;
     buf[i] = (b0+b1+b2+b3+b4+b5+b6+w*0.5362)/7;
     b6 = w*0.115926;
+  }
+  const fade = Math.floor(sr * 0.01);
+  for (let i = 0; i < fade; i++) {
+      const wIn = 0.5 * (1 - Math.cos(Math.PI * i / fade));
+      buf[i] *= wIn;
+      buf[n - 1 - i] *= wIn;
   }
   return buf;
 }
@@ -730,15 +742,17 @@ async function startRecording() {
   try {
     setStatus('processing', 'Initializing audio...');
     setProgress(10);
-    if (!audioCtx || audioCtx.state === 'closed')
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    if (audioCtx.state === 'suspended') await audioCtx.resume();
-    
-    const selectedOutput = outDeviceSel.value;
-    if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
-      try { await audioCtx.setSinkId(selectedOutput); } 
-      catch (e) { console.warn("Could not set audio output device:", e); }
-    }
+	// Close any existing context first so we always start fresh with the correct output
+	if (audioCtx && audioCtx.state !== 'closed') {
+	  await audioCtx.close();
+	}
+
+	const selectedOutput = outDeviceSel.value;
+	const ctxOptions = { sampleRate: 48000 };
+	if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
+	  ctxOptions.sinkId = selectedOutput;
+	}
+	audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
     
     capturedSR = audioCtx.sampleRate;
     $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
@@ -767,8 +781,13 @@ async function startRecording() {
 
     setStatus('processing', 'Generating sweep...');
     setProgress(30);
+
+    // FIX: Generate internal sweep starting 2 octaves below user selection to avoid 20Hz edge ripples
+    const actualFLo = Math.max(5, capturedFLo / 4);
+    const actualFHi = Math.min(capturedSR / 2 * 0.95, capturedFHi * 1.2);
+
     const refSamples = sweepType === 'logsweep'
-      ? generateLogSweep(capturedSR, duration, capturedFLo, capturedFHi)
+      ? generateLogSweep(capturedSR, duration, actualFLo, actualFHi)
       : generatePinkNoise(capturedSR, duration);
     
     capturedRef = new Float32Array(refSamples.length);
@@ -810,6 +829,12 @@ async function startRecording() {
     capturedRec = await recordPromise;
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
+
+    // FIX: Remove DC Offset (Microphone Bias) to stop 1/f spectral leakage into the low frequencies
+    let dcSum = 0;
+    for (let i = 0; i < capturedRec.length; i++) dcSum += capturedRec[i];
+    const dcMean = dcSum / capturedRec.length;
+    for (let i = 0; i < capturedRec.length; i++) capturedRec[i] -= dcMean;
 
     const capSecs = (capturedRec.length / capturedSR).toFixed(2);
     setStatus('ready', 'Captured ' + capturedRec.length + ' samples (' + capSecs + 's). Ready to analyze.');
