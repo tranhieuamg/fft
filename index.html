@@ -122,7 +122,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">DC Block & Pad Edition</span>
+    <span class="logo-tag">v2.0 Math Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -210,8 +210,14 @@
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
         <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
-        <button class="btn-secondary" id="btn-save"    disabled>SAVE CURVE</button>
-        <button class="btn-secondary" id="btn-export"  disabled>EXPORT CSV</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" id="btn-scale" disabled style="flex:1;">SCALE</button>
+          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
+          <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
+        </div>
         <button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
@@ -240,7 +246,7 @@
       </div>
     </div>
     <div id="plot"></div>
-    <div class="watermark">FREQSCOPE v1.9</div>
+    <div class="watermark">FREQSCOPE v2.0</div>
   </div>
 </main>
 
@@ -250,21 +256,51 @@
   <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
 </div>
 
-<script>
-// ===================================================================
-//  FreqScope v1.9
-//  CHANGES:
-//   - DC OFFSET FIX: Subtracted mean from recorded signal to prevent 
-//     1/f spectral leakage from corrupting the <100Hz range.
-//   - SWEEP PADDING: Generates log sweeps starting 2 octaves below UI 
-//     limit (e.g. 5Hz) to prevent Gibbs start-up ripples near 20Hz.
-//   - EXTENDED IR: Lengthened the Right-Half-Hann window to 1000ms.
-// ===================================================================
+<div id="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center; font-family:var(--sans);">
+  
+  <div id="modal-scale" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SCALE CURVE</div>
+    <div class="param-row">
+      <label class="param-label">Select Curve</label>
+      <select id="scale-curve-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <div class="param-label"><span>Offset (dB)</span><span class="param-value" id="scale-val-disp">0.0 dB</span></div>
+      <input type="range" id="scale-slider" min="-30" max="30" step="0.5" value="0">
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">DONE</button>
+    </div>
+  </div>
 
+  <div id="modal-sub" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SUBTRACT CURVES</div>
+    <div class="param-row">
+      <label class="param-label">Curve A (Minuend)</label>
+      <select id="sub-a-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <label class="param-label">Curve B (Subtrahend)</label>
+      <select id="sub-b-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row" style="margin-bottom:0;">
+      <label class="param-label">Result Name</label>
+      <input type="text" id="sub-name" value="A minus B" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:4px;outline:none;">
+    </div>
+    <div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:-4px;">Result = A - B</div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">CANCEL</button>
+      <button class="btn-primary" style="width:auto; padding:8px 16px;" onclick="doSubtract()">SUBTRACT</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0, audioCtx = null;
 let savedCurves = [], latestFreqs = null, latestDb = null;
-let isMeasuring = false, measureCount = 1;
+let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
 let capturedRef = null;
 let capturedRec = null;
@@ -293,6 +329,8 @@ const normChk       = $('norm-toggle');
 const smoothSel     = $('smooth-val');
 const sweepSel      = $('sweep-type');
 const nameInput     = $('curve-name');
+const btnScale      = $('btn-scale');
+const btnSubtract   = $('btn-subtract');
 const inDeviceSel   = $('input-device');
 const outDeviceSel  = $('output-device');
 
@@ -715,8 +753,9 @@ function replot() {
   const traces = [];
 
   savedCurves.forEach(c => {
-    let db = c.rawDb;
-    if (useNorm) db = normalize(c.freqs, db);
+    let db = c.rawDb.slice();
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+    if (c.offset) db = db.map(v => v + c.offset);
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -724,14 +763,19 @@ function replot() {
 
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
-    let db = latestDb;
+    let db = latestDb.slice();
     if (useNorm) db = normalize(latestFreqs, db);
+    if (liveOffset) db = db.map(v => v + liveOffset);
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
   }
 
   Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
+  
+  const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
+  if(btnScale) btnScale.disabled = totalCurves < 1;
+  if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -794,9 +838,7 @@ async function startRecording() {
       ? generateLogSweep(capturedSR, duration, actualFLo, actualFHi)
       : generatePinkNoise(capturedSR, duration);
     
-    capturedRef = new Float32Array(refSamples.length);
-	// AFTER (correct — store unit ref, scale separately for playback):
-	capturedRef = new Float32Array(refSamples);  // store unscaled
+    capturedRef = new Float32Array(refSamples);  // store unscaled
 	for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; // scale for playback only
 
     const preSec  = 0.5, postSec = 1.0;
@@ -905,6 +947,7 @@ async function runAnalysis() {
 
     latestFreqs  = result.freqs;
     latestDb     = result.db;
+    liveOffset   = 0;
 
     setProgress(100);
     replot();
@@ -935,8 +978,9 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, color });
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, color, offset: liveOffset });
   latestFreqs = latestDb = null;
+  liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
   renderSavedList(); replot();
@@ -963,24 +1007,64 @@ function renderSavedList() {
 function clearAll() {
   savedCurves = []; latestFreqs = latestDb = null;
   capturedRef = capturedRec = null;
-  colorIdx = 0; measureCount = 1;
+  colorIdx = 0; measureCount = 1; liveOffset = 0;
   nameInput.value = 'Measurement 1';
   btnAnalyze.disabled = btnSave.disabled = btnExport.disabled = true;
-  renderSavedList(); initPlot();
+  renderSavedList(); replot(); initPlot();
   ['meta-sr','meta-fft','meta-pts'].forEach(id => $(id).textContent = '\u2014');
   setStatus('', 'Cleared. Ready for new measurements.');
   infoBox.innerHTML = 'Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>Microphone access required.<br>Use headphones to avoid feedback.';
 }
 
+function interpolateDb(targetFreqs, sourceFreqs, sourceDb) {
+  let out = new Float64Array(targetFreqs.length);
+  for (let k = 0; k < targetFreqs.length; k++) {
+    const tf = targetFreqs[k];
+    if (tf <= sourceFreqs[0]) { out[k] = sourceDb[0]; continue; }
+    if (tf >= sourceFreqs[sourceFreqs.length - 1]) { out[k] = sourceDb[sourceDb.length - 1]; continue; }
+    let low = 0, high = sourceFreqs.length - 1;
+    while(low <= high) {
+      let mid = Math.floor((low + high) / 2);
+      if (sourceFreqs[mid] < tf) low = mid + 1;
+      else high = mid - 1;
+    }
+    let i = low;
+    const f0 = sourceFreqs[i-1], f1 = sourceFreqs[i];
+    const d0 = sourceDb[i-1], d1 = sourceDb[i];
+    const t = Math.log10(tf / f0) / Math.log10(f1 / f0);
+    out[k] = d0 + t * (d1 - d0);
+  }
+  return Array.from(out);
+}
+
 function exportCSV() {
-  const all = [...savedCurves];
-  if (latestFreqs) all.push({ name: nameInput.value || 'Live', freqs:latestFreqs, rawDb:latestDb });
+  const useNorm = normChk.checked;
+  const all = [];
+  savedCurves.forEach(c => {
+      let db = c.rawDb.slice();
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+      if (c.offset) db = db.map(v => v + c.offset);
+      all.push({ name: c.name, freqs: c.freqs, db: db });
+  });
+  if (latestFreqs) {
+      let db = latestDb.slice();
+      if (useNorm) db = normalize(latestFreqs, db);
+      if (liveOffset) db = db.map(v => v + liveOffset);
+      all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
+  }
+
   if (!all.length) return;
-  let csv = 'Frequency (Hz),' + all.map(c => c.name).join(',') + '\n';
+  let csv = 'Frequency (Hz),' + all.map(c => '"' + c.name + '"').join(',') + '\n';
   const ref = all[0];
   for (let i = 0; i < ref.freqs.length; i++) {
     const row = [ref.freqs[i].toFixed(2)];
-    for (const c of all) row.push(c.rawDb[i] !== undefined ? c.rawDb[i].toFixed(3) : '');
+    for (const c of all) {
+        if (c === ref) row.push(c.db[i].toFixed(3));
+        else {
+            const val = interpolateDb([ref.freqs[i]], c.freqs, c.db)[0];
+            row.push(val.toFixed(3));
+        }
+    }
     csv += row.join(',') + '\n';
   }
   const a = document.createElement('a');
@@ -995,8 +1079,115 @@ btnSave.addEventListener('click', saveCurve);
 btnExport.addEventListener('click', exportCSV);
 btnClear.addEventListener('click', clearAll);
 
+btnScale.addEventListener('click', () => {
+  const sel = $('scale-curve-sel');
+  sel.innerHTML = '';
+  if (latestFreqs) sel.options.add(new Option('Live Measurement', 'live'));
+  savedCurves.forEach((c, i) => sel.options.add(new Option(c.name, i)));
+  if (sel.options.length === 0) return;
+  
+  updateScaleSliderFromSel();
+  $('modal-scale').style.display = 'flex';
+  $('modal-sub').style.display = 'none';
+  $('modal-overlay').style.display = 'flex';
+});
+
+$('scale-curve-sel').addEventListener('change', updateScaleSliderFromSel);
+
+$('scale-slider').addEventListener('input', (e) => {
+  const v = parseFloat(e.target.value);
+  $('scale-val-disp').textContent = v.toFixed(1) + ' dB';
+  const val = $('scale-curve-sel').value;
+  if (val === 'live') {
+    liveOffset = v;
+  } else {
+    savedCurves[parseInt(val)].offset = v;
+  }
+  replot();
+});
+
+function updateScaleSliderFromSel() {
+  const val = $('scale-curve-sel').value;
+  const offset = val === 'live' ? liveOffset : (savedCurves[parseInt(val)].offset || 0);
+  $('scale-slider').value = offset;
+  $('scale-val-disp').textContent = parseFloat(offset).toFixed(1) + ' dB';
+}
+
+btnSubtract.addEventListener('click', () => {
+  const sela = $('sub-a-sel');
+  const selb = $('sub-b-sel');
+  sela.innerHTML = ''; selb.innerHTML = '';
+  if (latestFreqs) {
+    sela.options.add(new Option('Live Measurement', 'live'));
+    selb.options.add(new Option('Live Measurement', 'live'));
+  }
+  savedCurves.forEach((c, i) => {
+    sela.options.add(new Option(c.name, i));
+    selb.options.add(new Option(c.name, i));
+  });
+  if (sela.options.length < 2) return;
+  selb.selectedIndex = 1; 
+  
+  updateSubName();
+  
+  $('modal-scale').style.display = 'none';
+  $('modal-sub').style.display = 'flex';
+  $('modal-overlay').style.display = 'flex';
+});
+
+$('sub-a-sel').addEventListener('change', updateSubName);
+$('sub-b-sel').addEventListener('change', updateSubName);
+
+function updateSubName() {
+  const sela = $('sub-a-sel');
+  const selb = $('sub-b-sel');
+  if(sela.selectedIndex >= 0 && selb.selectedIndex >= 0) {
+    $('sub-name').value = 'Difference (' + sela.options[sela.selectedIndex].text + ' - ' + selb.options[selb.selectedIndex].text + ')';
+  }
+}
+
+function closeModal() {
+  $('modal-overlay').style.display = 'none';
+}
+
+function doSubtract() {
+  const valA = $('sub-a-sel').value;
+  const valB = $('sub-b-sel').value;
+  if (valA === valB) return alert('Cannot subtract a curve from itself.');
+
+  const useNorm = normChk.checked;
+  
+  function getScreenDb(val) {
+      if (val === 'live') {
+          let db = latestDb.slice();
+          if (useNorm) db = normalize(latestFreqs, db);
+          if (liveOffset) db = db.map(v => v + liveOffset);
+          return { freqs: latestFreqs, db: db };
+      } else {
+          const c = savedCurves[parseInt(val)];
+          let db = c.rawDb.slice();
+          if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+          if (c.offset) db = db.map(v => v + c.offset);
+          return { freqs: c.freqs, db: db };
+      }
+  }
+
+  const cA = getScreenDb(valA);
+  const cB = getScreenDb(valB);
+  
+  const interDb = interpolateDb(cA.freqs, cB.freqs, cB.db);
+  const newDb = cA.db.map((val, i) => val - interDb[i]);
+  
+  const color = COLORS[colorIdx++ % COLORS.length];
+  savedCurves.push({ name: $('sub-name').value, freqs: cA.freqs, rawDb: newDb, offset: 0, color: color, isMath: true });
+  
+  renderSavedList();
+  replot();
+  closeModal();
+  setStatus('ready', '"' + $('sub-name').value + '" created.');
+}
+
 initPlot();
-setStatus('', 'Ready. Select hardware, configure parameters, and click RECORD SIGNAL.');
 </script>
 </body>
 </html>
