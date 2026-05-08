@@ -233,7 +233,14 @@
     </div>
 
     <div>
-      <div class="section-label">Controls</div>
+      <div class="section-label">View Mode</div>
+      <div style="display:flex; gap:4px; margin-bottom: 24px;">
+        <button class="btn-secondary" id="btn-view-fr" style="flex:1; border-color:var(--accent); color:var(--accent);">FR</button>
+        <button class="btn-secondary" id="btn-view-ir" style="flex:1;">IR</button>
+        <button class="btn-secondary" id="btn-view-both" style="flex:1;">BOTH</button>
+      </div>
+    </div>
+	  <div class="section-label">Controls</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
         <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
@@ -263,17 +270,26 @@
     </div>
   </aside>
 
-  <div class="chart-area">
-    <div class="chart-header">
-      <div class="chart-title">Frequency Response</div>
-      <div class="chart-meta">
-        SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
-        FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
-        Points: <span id="meta-pts">&#8212;</span>
+  <div class="chart-area" id="chart-area-container" style="flex-direction: row; gap: 16px;">
+    <div id="fr-container" style="flex:1; display:flex; flex-direction:column; position:relative; min-width:0;">
+      <div class="chart-header">
+        <div class="chart-title">Frequency Response</div>
+        <div class="chart-meta">
+          SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
+          FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
+          Points: <span id="meta-pts">&#8212;</span>
+        </div>
       </div>
+      <div id="plot"></div>
+      <div class="watermark">FREQSCOPE v2.1</div>
     </div>
-    <div id="plot"></div>
-    <div class="watermark">FREQSCOPE v2.0</div>
+    
+    <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0;">
+      <div class="chart-header">
+        <div class="chart-title">Impulse Response</div>
+      </div>
+      <div id="ir-plot" style="flex:1; min-height:420px; border:1px solid var(--border); border-radius:4px; background:var(--surface);"></div>
+    </div>
   </div>
 </main>
 
@@ -326,7 +342,7 @@
 <script>
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0, audioCtx = null;
-let savedCurves = [], latestFreqs = null, latestDb = null;
+let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
 let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
 let capturedRef = null;
@@ -625,7 +641,7 @@ self.onmessage = function(e) {
      finalDb = smoothed.db;
   }
 
-  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, fftLen: gateSize });
+  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, fftLen: gateSize, ir: ir });
 };
 `;
 
@@ -803,6 +819,7 @@ if (latestFreqs) {
   const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
   if(btnScale) btnScale.disabled = totalCurves < 1;
   if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
+  replotIr();
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -975,6 +992,8 @@ async function runAnalysis() {
     latestFreqs  = result.freqs;
     latestDb     = result.db;
     liveOffset   = 0;
+	latestIr      = result.ir;
+    latestPeakIdx = result.peakIdx;
 
     setProgress(100);
     replot();
@@ -1005,8 +1024,8 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, color, offset: liveOffset });
-  latestFreqs = latestDb = null;
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset });
+  latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
@@ -1032,7 +1051,7 @@ function renderSavedList() {
 }
 
 function clearAll() {
-  savedCurves = []; latestFreqs = latestDb = null;
+  savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   capturedRef = capturedRec = null;
   colorIdx = 0; measureCount = 1; liveOffset = 0;
   nameInput.value = 'Measurement 1';
@@ -1213,8 +1232,117 @@ function doSubtract() {
   closeModal();
   setStatus('ready', '"' + $('sub-name').value + '" created.');
 }
+// ───────────────────────────────────────────────────────────────────
+//  IR PLOTTING & VIEW LOGIC
+// ───────────────────────────────────────────────────────────────────
+const btnViewFr = $('btn-view-fr');
+const btnViewIr = $('btn-view-ir');
+const btnViewBoth = $('btn-view-both');
+const frContainer = $('fr-container');
+const irContainer = $('ir-container');
+const chartAreaContainer = $('chart-area-container');
 
+function setViewMode(mode) {
+    btnViewFr.style.borderColor = mode === 'fr' ? 'var(--accent)' : 'var(--border)';
+    btnViewFr.style.color = mode === 'fr' ? 'var(--accent)' : 'var(--text-dim)';
+    btnViewIr.style.borderColor = mode === 'ir' ? 'var(--accent)' : 'var(--border)';
+    btnViewIr.style.color = mode === 'ir' ? 'var(--accent)' : 'var(--text-dim)';
+    btnViewBoth.style.borderColor = mode === 'both' ? 'var(--accent)' : 'var(--border)';
+    btnViewBoth.style.color = mode === 'both' ? 'var(--accent)' : 'var(--text-dim)';
+
+    if (mode === 'fr') {
+        frContainer.style.display = 'flex'; irContainer.style.display = 'none';
+    } else if (mode === 'ir') {
+        frContainer.style.display = 'none'; irContainer.style.display = 'flex';
+    } else {
+        frContainer.style.display = 'flex'; irContainer.style.display = 'flex';
+        chartAreaContainer.style.flexDirection = window.innerWidth > 1000 ? 'row' : 'column';
+    }
+    window.dispatchEvent(new Event('resize')); // Force Plotly to scale correctly
+}
+
+btnViewFr.addEventListener('click', () => setViewMode('fr'));
+btnViewIr.addEventListener('click', () => setViewMode('ir'));
+btnViewBoth.addEventListener('click', () => setViewMode('both'));
+
+function initIrPlot() {
+  Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
+}
+
+function makeIrPlotLayout() {
+  return {
+    paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
+    margin:{ l:60, r:20, t:20, b:50 },
+    xaxis:{ 
+      title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
+      tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
+    },
+    yaxis:{ 
+      title:{ text:'Amplitude (%)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      range:[-100, 100], gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
+      tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
+      zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1 
+    },
+    legend:{ font:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
+      bgcolor:'#111418', bordercolor:'#222830', borderwidth:1, x:0.01, y:0.99 },
+    showlegend: false, hovermode:'x unified',
+    hoverlabel:{ bgcolor:'#181c22', bordercolor:'#222830', font:{ family:'Share Tech Mono', size:11, color:'#c8d4e0' } }
+  };
+}
+
+function replotIr() {
+  const traces = [];
+  // Zoom window: plot from 2ms before peak to 15ms after peak (prevents UI lag)
+  const pre = Math.floor(48000 * 0.002); 
+  const post = Math.floor(48000 * 0.015);
+
+  savedCurves.forEach(c => {
+    if (!c.rawIr) return; // Skip if it's a Math curve
+    const peak = c.peakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end = Math.min(c.rawIr.length, peak + post);
+    const slice = c.rawIr.slice(start, end);
+    
+    const timeMs = new Float32Array(slice.length);
+    let maxAmp = 0;
+    for (let i = 0; i < slice.length; i++) {
+       timeMs[i] = ((start + i) / 48000) * 1000;
+       if (Math.abs(slice[i]) > maxAmp) maxAmp = Math.abs(slice[i]);
+    }
+    if (maxAmp === 0) maxAmp = 1;
+    const plotIr = slice.map(v => (v / maxAmp) * 100);
+
+    traces.push({ x:timeMs, y:plotIr, name:c.name, mode:'lines',
+      line:{ color:c.color, width:1 },
+      hovertemplate:'%{y:.1f}%<extra>'+c.name+'</extra>' });
+  });
+
+  if (latestIr) {
+    const liveName = nameInput.value || 'Live';
+    const peak = latestPeakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end = Math.min(latestIr.length, peak + post);
+    const slice = latestIr.slice(start, end);
+    
+    const timeMs = new Float32Array(slice.length);
+    let maxAmp = 0;
+    for (let i = 0; i < slice.length; i++) {
+       timeMs[i] = ((start + i) / 48000) * 1000;
+       if (Math.abs(slice[i]) > maxAmp) maxAmp = Math.abs(slice[i]);
+    }
+    if (maxAmp === 0) maxAmp = 1;
+    const plotIr = slice.map(v => (v / maxAmp) * 100);
+
+    traces.push({ x:timeMs, y:plotIr, name:liveName+' *', mode:'lines',
+      line:{ color:COLORS[colorIdx % COLORS.length], width:1.5 },
+      hovertemplate:'%{y:.1f}%<extra>'+liveName+'</extra>' });
+  }
+
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(), { displayModeBar:false, responsive:true });
+}
 initPlot();
+initIrPlot();
 </script>
 </body>
 </html>
