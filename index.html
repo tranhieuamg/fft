@@ -791,10 +791,9 @@ async function startRecording() {
       : generatePinkNoise(capturedSR, duration);
     
     capturedRef = new Float32Array(refSamples.length);
-    for (let i = 0; i < refSamples.length; i++) {
-        refSamples[i] *= volume;
-        capturedRef[i] = refSamples[i]; 
-    }
+	// AFTER (correct — store unit ref, scale separately for playback):
+	capturedRef = new Float32Array(refSamples);  // store unscaled
+	for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; // scale for playback only
 
     const preSec  = 0.5, postSec = 1.0;
     const preN    = Math.floor(capturedSR * preSec);
