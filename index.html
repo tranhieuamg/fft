@@ -115,6 +115,33 @@
                color:var(--border); letter-spacing:2px; pointer-events:none; user-select:none; }
   ::-webkit-scrollbar { width:4px; }
   ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+/* Mobile and Tablet Adaptation */
+  @media (max-width: 900px) {
+    main { 
+      display: flex; 
+      flex-direction: column; 
+    }
+    .sidebar { 
+      border-right: none; 
+      border-bottom: 1px solid var(--border); 
+      max-height: 45vh; /* Keeps controls scrollable on the top half of the screen */
+    }
+    header { 
+      padding: 12px 16px; 
+    }
+    .chart-area {
+      padding: 16px;
+    }
+    #plot { 
+      min-height: 400px; 
+    }
+    
+    /* Enlarges slider thumbs for easier touch interaction on Android */
+    input[type=range]::-webkit-slider-thumb {
+      width: 24px; 
+      height: 24px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -122,7 +149,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">DC Block & Pad Edition</span>
+    <span class="logo-tag">v2.1 Unified Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -176,7 +203,7 @@
     </div>
 
     <div>
-      <div class="section-label">Processing</div>
+      <div class="section-label">FR Processing</div>
       <div class="param-row">
         <div class="param-label">
             <span>Smoothing</span>
@@ -206,12 +233,36 @@
     </div>
 
     <div>
+      <div class="section-label">IR Display Settings</div>
+      <div class="param-row">
+        <div class="param-label"><span>IR X-Offset</span><span class="param-value" id="ir-xoffset-val">0.0 ms</span></div>
+        <input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>IR Y-Range</span><span class="param-value" id="ir-yrange-val">±100%</span></div>
+        <input type="range" id="ir-yrange" min="1" max="100" step="1" value="100">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">View Mode</div>
+      <div style="display:flex; gap:4px; margin-bottom: 24px;">
+        <button class="btn-secondary" id="btn-view-fr" style="flex:1; border-color:var(--accent); color:var(--accent);">FR</button>
+        <button class="btn-secondary" id="btn-view-ir" style="flex:1;">IR</button>
+        <button class="btn-secondary" id="btn-view-both" style="flex:1;">BOTH</button>
+      </div>
       <div class="section-label">Controls</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
         <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
-        <button class="btn-secondary" id="btn-save"    disabled>SAVE CURVE</button>
-        <button class="btn-secondary" id="btn-export"  disabled>EXPORT CSV</button>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" id="btn-scale" disabled style="flex:1;">SCALE</button>
+          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
+        </div>
+        <div style="display:flex; gap:8px;">
+          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
+          <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
+        </div>
         <button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
@@ -230,17 +281,26 @@
     </div>
   </aside>
 
-  <div class="chart-area">
-    <div class="chart-header">
-      <div class="chart-title">Frequency Response</div>
-      <div class="chart-meta">
-        SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
-        FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
-        Points: <span id="meta-pts">&#8212;</span>
+  <div class="chart-area" id="chart-area-container" style="flex-direction: column; gap: 16px; overflow-y: auto;">
+    <div id="fr-container" style="flex:1; display:flex; flex-direction:column; position:relative; min-width:0; min-height:400px;">
+      <div class="chart-header">
+        <div class="chart-title">Frequency Response</div>
+        <div class="chart-meta">
+          SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
+          FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
+          Points: <span id="meta-pts">&#8212;</span>
+        </div>
       </div>
+      <div id="plot"></div>
+      <div class="watermark">FREQSCOPE v2.1</div>
     </div>
-    <div id="plot"></div>
-    <div class="watermark">FREQSCOPE v1.9</div>
+    
+    <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0; min-height:400px;">
+      <div class="chart-header">
+        <div class="chart-title">Impulse Response</div>
+      </div>
+      <div id="ir-plot" style="flex:1; border:1px solid var(--border); border-radius:4px; background:var(--surface);"></div>
+    </div>
   </div>
 </main>
 
@@ -250,21 +310,51 @@
   <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
 </div>
 
-<script>
-// ===================================================================
-//  FreqScope v1.9
-//  CHANGES:
-//   - DC OFFSET FIX: Subtracted mean from recorded signal to prevent 
-//     1/f spectral leakage from corrupting the <100Hz range.
-//   - SWEEP PADDING: Generates log sweeps starting 2 octaves below UI 
-//     limit (e.g. 5Hz) to prevent Gibbs start-up ripples near 20Hz.
-//   - EXTENDED IR: Lengthened the Right-Half-Hann window to 1000ms.
-// ===================================================================
+<div id="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center; font-family:var(--sans);">
+  
+  <div id="modal-scale" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SCALE CURVE</div>
+    <div class="param-row">
+      <label class="param-label">Select Curve</label>
+      <select id="scale-curve-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <div class="param-label"><span>Offset (dB)</span><span class="param-value" id="scale-val-disp">0.0 dB</span></div>
+      <input type="range" id="scale-slider" min="-30" max="30" step="0.5" value="0">
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">DONE</button>
+    </div>
+  </div>
 
+  <div id="modal-sub" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SUBTRACT CURVES</div>
+    <div class="param-row">
+      <label class="param-label">Curve A (Minuend)</label>
+      <select id="sub-a-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <label class="param-label">Curve B (Subtrahend)</label>
+      <select id="sub-b-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row" style="margin-bottom:0;">
+      <label class="param-label">Result Name</label>
+      <input type="text" id="sub-name" value="A minus B" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:4px;outline:none;">
+    </div>
+    <div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:-4px;">Result = A - B</div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">CANCEL</button>
+      <button class="btn-primary" style="width:auto; padding:8px 16px;" onclick="doSubtract()">SUBTRACT</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0, audioCtx = null;
-let savedCurves = [], latestFreqs = null, latestDb = null;
-let isMeasuring = false, measureCount = 1;
+let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
+let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
 let capturedRef = null;
 let capturedRec = null;
@@ -293,8 +383,12 @@ const normChk       = $('norm-toggle');
 const smoothSel     = $('smooth-val');
 const sweepSel      = $('sweep-type');
 const nameInput     = $('curve-name');
+const btnScale      = $('btn-scale');
+const btnSubtract   = $('btn-subtract');
 const inDeviceSel   = $('input-device');
 const outDeviceSel  = $('output-device');
+const irXSlider     = $('ir-xoffset');
+const irYSlider     = $('ir-yrange');
 
 // ───────────────────────────────────────────────────────────────────
 //  Hardware Device Enumeration
@@ -353,9 +447,14 @@ function updateDisplays() {
   $('flo-val').textContent    = floSlider.value + ' Hz';
   $('fhi-val').textContent    = fhiSlider.value + ' Hz';
   $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
+  $('ir-xoffset-val').textContent = parseFloat(irXSlider.value).toFixed(1) + ' ms';
+  $('ir-yrange-val').textContent = '±' + irYSlider.value + '%';
 }
-[durSlider,volSlider,floSlider,fhiSlider,ySlider].forEach(s => s.addEventListener('input', updateDisplays));
-[normChk,ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
+
+[durSlider, volSlider, floSlider, fhiSlider, ySlider, irXSlider, irYSlider].forEach(s => s.addEventListener('input', updateDisplays));
+[normChk, ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
+irXSlider.addEventListener('input', () => { if (latestIr || savedCurves.length > 0) replotIr(); });
+irYSlider.addEventListener('input', () => { if (latestIr || savedCurves.length > 0) replotIr(); });
 updateDisplays();
 
 function setStatus(state, msg) {
@@ -364,6 +463,14 @@ function setStatus(state, msg) {
   logText.textContent = msg;
 }
 function setProgress(pct) { progressBar.style.width = Math.min(100, Math.max(0, pct)) + '%'; }
+
+// Global visibility toggle function attached to the checkboxes
+window.toggleCurve = function(idx, isVisible) {
+  savedCurves[idx].visible = isVisible;
+  replot();
+  replotIr();
+  renderSavedList();
+};
 
 // ───────────────────────────────────────────────────────────────────
 //  WEB WORKER SOURCE
@@ -560,7 +667,12 @@ self.onmessage = function(e) {
      finalDb = smoothed.db;
   }
 
-  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, fftLen: gateSize });
+  // FIXED — transfer ir.buffer (zero-copy); worker can no longer use ir after this:
+  self.postMessage(
+    { type: 'done', freqs: finalFreqs, db: finalDb,
+      peakIdx, fftLen: gateSize, ir: ir },
+    [ir.buffer]   // ← second argument: list of Transferables
+  );
 };
 `;
 
@@ -580,7 +692,6 @@ function generateLogSweep(sr, dur, f1, f2) {
     const t = i / sr;
     buf[i] = Math.sin(2 * Math.PI * f1 * dur / K * (Math.exp(t / dur * K) - 1));
   }
-  // Fade in over 1 full cycle of the starting frequency to avoid startup clicks
   const fade_in = Math.min(Math.floor(sr / f1), Math.floor(n * 0.1));
   for (let i = 0; i < fade_in; i++) {
       buf[i] *= 0.5 * (1 - Math.cos(Math.PI * i / fade_in));
@@ -702,7 +813,7 @@ function makePlotLayout(yRange=30) {
 function normalize(freqs, db) {
     let maxVal = -Infinity;
     for (let i = 0; i < freqs.length; i++) {
-        if (freqs[i] >= 50 && freqs[i] <= 15000 && db[i] > maxVal)
+        if (freqs[i] >= 100 && freqs[i] <= 15000 && db[i] > maxVal)
             maxVal = db[i];
     }
     if (maxVal === -Infinity) maxVal = Math.max(...db); // fallback
@@ -715,8 +826,10 @@ function replot() {
   const traces = [];
 
   savedCurves.forEach(c => {
-    let db = c.rawDb;
-    if (useNorm) db = normalize(c.freqs, db);
+    if (c.visible === false) return; // Hooked to unified toggle visibility
+    let db = c.rawDb.slice();
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       
+    if (c.offset) db = db.map(v => v + c.offset);      
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -724,14 +837,19 @@ function replot() {
 
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
-    let db = latestDb;
-    if (useNorm) db = normalize(latestFreqs, db);
+    let db = latestDb.slice();
+    if (liveOffset) db = db.map(v => v + liveOffset);       
+    if (useNorm) db = normalize(latestFreqs, db);            
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
   }
 
   Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
+  
+  const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
+  if(btnScale) btnScale.disabled = savedCurves.length < 1;
+  if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -746,17 +864,16 @@ async function startRecording() {
   try {
     setStatus('processing', 'Initializing audio...');
     setProgress(10);
-	// Close any existing context first so we always start fresh with the correct output
-	if (audioCtx && audioCtx.state !== 'closed') {
-	  await audioCtx.close();
-	}
+    if (audioCtx && audioCtx.state !== 'closed') {
+      await audioCtx.close();
+    }
 
-	const selectedOutput = outDeviceSel.value;
-	const ctxOptions = { sampleRate: 48000 };
-	if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
-	  ctxOptions.sinkId = selectedOutput;
-	}
-	audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
+    const selectedOutput = outDeviceSel.value;
+    const ctxOptions = { sampleRate: 48000 };
+    if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
+      ctxOptions.sinkId = selectedOutput;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
     
     capturedSR = audioCtx.sampleRate;
     $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
@@ -765,10 +882,23 @@ async function startRecording() {
     setProgress(20);
     
     const selectedInput = inDeviceSel.value;
-    const audioConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
-    if (selectedInput) {
-      audioConstraints.deviceId = { exact: selectedInput };
-    }
+    
+        // The "Nuclear" constraints to force raw audio on stubborn Android builds
+        const audioConstraints = { 
+          echoCancellation: { exact: false }, 
+          noiseSuppression: { exact: false }, 
+          autoGainControl: { exact: false }, 
+          channelCount: { ideal: 2 }, 
+          sampleRate: { ideal: 48000 }, 
+          googAutoGainControl: false,
+          googNoiseSuppression: false,
+          googHighpassFilter: false,
+          googEchoCancellation: false
+        };
+    
+        if (selectedInput) {
+          audioConstraints.deviceId = { exact: selectedInput };
+        }
 
     let stream;
     try {
@@ -786,7 +916,6 @@ async function startRecording() {
     setStatus('processing', 'Generating sweep...');
     setProgress(30);
 
-    // FIX: Generate internal sweep starting 2 octaves below user selection to avoid 20Hz edge ripples
     const actualFLo = Math.max(5, capturedFLo / 4);
     const actualFHi = Math.min(capturedSR / 2 * 0.95, capturedFHi * 1.2);
 
@@ -794,10 +923,8 @@ async function startRecording() {
       ? generateLogSweep(capturedSR, duration, actualFLo, actualFHi)
       : generatePinkNoise(capturedSR, duration);
     
-    capturedRef = new Float32Array(refSamples.length);
-	// AFTER (correct — store unit ref, scale separately for playback):
-	capturedRef = new Float32Array(refSamples);  // store unscaled
-	for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; // scale for playback only
+    capturedRef = new Float32Array(refSamples); 
+    for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; 
 
     const preSec  = 0.5, postSec = 1.0;
     const preN    = Math.floor(capturedSR * preSec);
@@ -833,7 +960,6 @@ async function startRecording() {
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
 
-    // FIX: Remove DC Offset (Microphone Bias) to stop 1/f spectral leakage into the low frequencies
     let dcSum = 0;
     for (let i = 0; i < capturedRec.length; i++) dcSum += capturedRec[i];
     const dcMean = dcSum / capturedRec.length;
@@ -905,9 +1031,13 @@ async function runAnalysis() {
 
     latestFreqs  = result.freqs;
     latestDb     = result.db;
+    liveOffset   = 0;
+    latestIr      = result.ir;
+    latestPeakIdx = result.peakIdx;
 
     setProgress(100);
     replot();
+    replotIr();
     
     const latMs = (result.peakIdx / capturedSR * 1000).toFixed(1);
     setStatus('ready', 'Done! ' + result.freqs.length + ' pts, IR peak at ' + latMs + ' ms');
@@ -935,15 +1065,16 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, color });
-  latestFreqs = latestDb = null;
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset, visible: true });
+  latestFreqs = latestDb = latestIr = latestPeakIdx = null;
+  liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
-  renderSavedList(); replot();
+  renderSavedList(); replot(); replotIr();
   setStatus('ready', '"' + name + '" saved.');
 }
 
-function removeSaved(idx) { savedCurves.splice(idx, 1); renderSavedList(); replot(); }
+function removeSaved(idx) { savedCurves.splice(idx, 1); renderSavedList(); replot(); replotIr(); }
 
 function renderSavedList() {
   const el = $('saved-list');
@@ -951,8 +1082,11 @@ function renderSavedList() {
     el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>';
     return;
   }
+  
+  // Appended unified visibility toggles natively to each list item
   el.innerHTML = savedCurves.map((c,i) =>
     '<div class="saved-item">' +
+    '<input type="checkbox" ' + (c.visible !== false ? 'checked' : '') + ' onchange="toggleCurve(' + i + ', this.checked)" title="Toggle Visibility" style="margin-right:6px; cursor:pointer;">' +
     '<div class="swatch" style="background:' + c.color + '"></div>' +
     '<div class="name">' + c.name + '</div>' +
     '<button onclick="removeSaved(' + i + ')" title="Remove">x</button>' +
@@ -961,26 +1095,66 @@ function renderSavedList() {
 }
 
 function clearAll() {
-  savedCurves = []; latestFreqs = latestDb = null;
+  savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   capturedRef = capturedRec = null;
-  colorIdx = 0; measureCount = 1;
+  colorIdx = 0; measureCount = 1; liveOffset = 0;
   nameInput.value = 'Measurement 1';
   btnAnalyze.disabled = btnSave.disabled = btnExport.disabled = true;
-  renderSavedList(); initPlot();
+  renderSavedList(); replot(); replotIr();
   ['meta-sr','meta-fft','meta-pts'].forEach(id => $(id).textContent = '\u2014');
   setStatus('', 'Cleared. Ready for new measurements.');
   infoBox.innerHTML = 'Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>Microphone access required.<br>Use headphones to avoid feedback.';
 }
 
+function interpolateDb(targetFreqs, sourceFreqs, sourceDb) {
+  let out = new Float64Array(targetFreqs.length);
+  for (let k = 0; k < targetFreqs.length; k++) {
+    const tf = targetFreqs[k];
+    if (tf <= sourceFreqs[0]) { out[k] = sourceDb[0]; continue; }
+    if (tf >= sourceFreqs[sourceFreqs.length - 1]) { out[k] = sourceDb[sourceDb.length - 1]; continue; }
+    let low = 0, high = sourceFreqs.length - 1;
+    while(low <= high) {
+      let mid = Math.floor((low + high) / 2);
+      if (sourceFreqs[mid] < tf) low = mid + 1;
+      else high = mid - 1;
+    }
+    let i = low;
+    const f0 = sourceFreqs[i-1], f1 = sourceFreqs[i];
+    const d0 = sourceDb[i-1], d1 = sourceDb[i];
+    const t = Math.log10(tf / f0) / Math.log10(f1 / f0);
+    out[k] = d0 + t * (d1 - d0);
+  }
+  return Array.from(out);
+}
+
 function exportCSV() {
-  const all = [...savedCurves];
-  if (latestFreqs) all.push({ name: nameInput.value || 'Live', freqs:latestFreqs, rawDb:latestDb });
+  const useNorm = normChk.checked;
+  const all = [];
+  savedCurves.forEach(c => {
+      let db = c.rawDb.slice();
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+      if (c.offset) db = db.map(v => v + c.offset);
+      all.push({ name: c.name, freqs: c.freqs, db: db });
+  });
+  if (latestFreqs) {
+      let db = latestDb.slice();
+      if (liveOffset) db = db.map(v => v + liveOffset);
+      if (useNorm) db = normalize(latestFreqs, db);
+      all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
+  }
+
   if (!all.length) return;
-  let csv = 'Frequency (Hz),' + all.map(c => c.name).join(',') + '\n';
+  let csv = 'Frequency (Hz),' + all.map(c => '"' + c.name + '"').join(',') + '\n';
   const ref = all[0];
   for (let i = 0; i < ref.freqs.length; i++) {
     const row = [ref.freqs[i].toFixed(2)];
-    for (const c of all) row.push(c.rawDb[i] !== undefined ? c.rawDb[i].toFixed(3) : '');
+    for (const c of all) {
+        if (c === ref) row.push(c.db[i].toFixed(3));
+        else {
+            const val = interpolateDb([ref.freqs[i]], c.freqs, c.db)[0];
+            row.push(val.toFixed(3));
+        }
+    }
     csv += row.join(',') + '\n';
   }
   const a = document.createElement('a');
@@ -995,8 +1169,256 @@ btnSave.addEventListener('click', saveCurve);
 btnExport.addEventListener('click', exportCSV);
 btnClear.addEventListener('click', clearAll);
 
+btnScale.addEventListener('click', () => {
+  const sel = $('scale-curve-sel');
+  sel.innerHTML = '';
+  savedCurves.forEach((c, i) => sel.options.add(new Option(c.name, i)));
+  if (sel.options.length === 0) {
+    setStatus('', 'Save a curve first before using Scale.');
+    return;
+  }
+  updateScaleSliderFromSel();
+  $('modal-scale').style.display = 'flex';
+  $('modal-sub').style.display = 'none';
+  $('modal-overlay').style.display = 'flex';
+});
+
+$('scale-curve-sel').addEventListener('change', updateScaleSliderFromSel);
+
+$('scale-slider').addEventListener('input', (e) => {
+  const v = parseFloat(e.target.value);
+  $('scale-val-disp').textContent = v.toFixed(1) + ' dB';
+  const val = $('scale-curve-sel').value;
+  if (val === 'live') {
+    liveOffset = v;
+  } else {
+    savedCurves[parseInt(val)].offset = v;
+  }
+  replot();
+});
+
+function updateScaleSliderFromSel() {
+  const val = $('scale-curve-sel').value;
+  const offset = val === 'live' ? liveOffset : (savedCurves[parseInt(val)].offset || 0);
+  $('scale-slider').value = offset;
+  $('scale-val-disp').textContent = parseFloat(offset).toFixed(1) + ' dB';
+}
+
+btnSubtract.addEventListener('click', () => {
+  const sela = $('sub-a-sel');
+  const selb = $('sub-b-sel');
+  sela.innerHTML = ''; selb.innerHTML = '';
+  if (latestFreqs) {
+    sela.options.add(new Option('Live Measurement', 'live'));
+    selb.options.add(new Option('Live Measurement', 'live'));
+  }
+  savedCurves.forEach((c, i) => {
+    sela.options.add(new Option(c.name, i));
+    selb.options.add(new Option(c.name, i));
+  });
+  if (sela.options.length < 2) return;
+  selb.selectedIndex = 1; 
+  
+  updateSubName();
+  
+  $('modal-scale').style.display = 'none';
+  $('modal-sub').style.display = 'flex';
+  $('modal-overlay').style.display = 'flex';
+});
+
+$('sub-a-sel').addEventListener('change', updateSubName);
+$('sub-b-sel').addEventListener('change', updateSubName);
+
+function updateSubName() {
+  const sela = $('sub-a-sel');
+  const selb = $('sub-b-sel');
+  if(sela.selectedIndex >= 0 && selb.selectedIndex >= 0) {
+    $('sub-name').value = 'Difference (' + sela.options[sela.selectedIndex].text + ' - ' + selb.options[selb.selectedIndex].text + ')';
+  }
+}
+
+function closeModal() {
+  $('modal-overlay').style.display = 'none';
+}
+
+function doSubtract() {
+  const valA = $('sub-a-sel').value;
+  const valB = $('sub-b-sel').value;
+  if (valA === valB) return alert('Cannot subtract a curve from itself.');
+
+  const useNorm = normChk.checked;
+  
+  function getScreenDb(val) {
+      if (val === 'live') {
+          let db = latestDb.slice();
+          if (liveOffset) db = db.map(v => v + liveOffset); // live: offset then normalize
+          if (useNorm) db = normalize(latestFreqs, db);      // (liveOffset has no effect with normalize ON — intentional)
+          return { freqs: latestFreqs, db };
+      } else {
+          const c = savedCurves[parseInt(val)];
+          let db = c.rawDb.slice();
+          if (useNorm && !c.isMath) db = normalize(c.freqs, db); // normalize first
+          if (c.offset) db = db.map(v => v + c.offset);          // offset after
+          return { freqs: c.freqs, db };
+      }
+  }
+
+  const cA = getScreenDb(valA);
+  const cB = getScreenDb(valB);
+  
+  const interDb = interpolateDb(cA.freqs, cB.freqs, cB.db);
+  const newDb = cA.db.map((val, i) => val - interDb[i]);
+  
+  const color = COLORS[colorIdx++ % COLORS.length];
+  savedCurves.push({ name: $('sub-name').value, freqs: cA.freqs, rawDb: newDb, offset: 0, color: color, isMath: true, visible: true });
+  
+  renderSavedList();
+  replot();
+  closeModal();
+  setStatus('ready', '"' + $('sub-name').value + '" created.');
+}
+
+// ───────────────────────────────────────────────────────────────────
+//  IR PLOTTING & VIEW LOGIC
+// ───────────────────────────────────────────────────────────────────
+const btnViewFr = $('btn-view-fr');
+const btnViewIr = $('btn-view-ir');
+const btnViewBoth = $('btn-view-both');
+const frContainer = $('fr-container');
+const irContainer = $('ir-container');
+const chartAreaContainer = $('chart-area-container');
+
+function setViewMode(mode) {
+    btnViewFr.style.borderColor = mode === 'fr' ? 'var(--accent)' : 'var(--border)';
+    btnViewFr.style.color = mode === 'fr' ? 'var(--accent)' : 'var(--text-dim)';
+    btnViewIr.style.borderColor = mode === 'ir' ? 'var(--accent)' : 'var(--border)';
+    btnViewIr.style.color = mode === 'ir' ? 'var(--accent)' : 'var(--text-dim)';
+    btnViewBoth.style.borderColor = mode === 'both' ? 'var(--accent)' : 'var(--border)';
+    btnViewBoth.style.color = mode === 'both' ? 'var(--accent)' : 'var(--text-dim)';
+
+    if (mode === 'fr') {
+        frContainer.style.display = 'flex'; irContainer.style.display = 'none';
+    } else if (mode === 'ir') {
+        frContainer.style.display = 'none'; irContainer.style.display = 'flex';
+    } else {
+        frContainer.style.display = 'flex'; irContainer.style.display = 'flex';
+        // Always splits vertically (stacked top/bottom) when BOTH is active
+        chartAreaContainer.style.flexDirection = 'column'; 
+    }
+    window.dispatchEvent(new Event('resize')); 
+}
+
+btnViewFr.addEventListener('click', () => setViewMode('fr'));
+btnViewIr.addEventListener('click', () => setViewMode('ir'));
+btnViewBoth.addEventListener('click', () => setViewMode('both'));
+
+function initIrPlot() {
+  Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
+}
+
+function makeIrPlotLayout(yRange=100) {
+  return {
+    paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
+    margin:{ l:60, r:20, t:20, b:50 },
+    xaxis:{ 
+      title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
+      tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
+    },
+    yaxis:{ 
+      title:{ text:'Amplitude (%)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      range:[-yRange, yRange], gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
+      tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
+      zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1 
+    },
+    legend:{ font:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
+      bgcolor:'#111418', bordercolor:'#222830', borderwidth:1, x:0.01, y:0.99 },
+    showlegend: false, hovermode:'x unified',
+    hoverlabel:{ bgcolor:'#181c22', bordercolor:'#222830', font:{ family:'Share Tech Mono', size:11, color:'#c8d4e0' } }
+  };
+}
+
+function replotIr() {
+  const irXOffset = parseFloat(irXSlider.value);
+  const irYRange = parseInt(irYSlider.value);
+  const traces = [];
+  
+  const sr   = capturedSR || 48000;
+  const pre  = Math.floor(sr * 0.002);
+  const post = Math.floor(sr * 0.100);
+  
+  let globalMax = 0;
+  const allIrCurves = [
+    ...savedCurves.filter(c => c.rawIr && c.visible !== false),
+    latestIr ? { rawIr: latestIr, peakIdx: latestPeakIdx } : null
+  ].filter(Boolean);
+
+  allIrCurves.forEach(c => {
+    const peak  = c.peakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end   = Math.min(c.rawIr.length, peak + post);
+    for (let i = start; i < end; i++) {
+      if (Math.abs(c.rawIr[i]) > globalMax) globalMax = Math.abs(c.rawIr[i]);
+    }
+  });
+  if (globalMax === 0) globalMax = 1;
+  
+  // ── Draw saved curves ──────────────────────────────────────────────────────
+  savedCurves.forEach(c => {
+    if (c.visible === false) return;
+    if (!c.rawIr) return;
+
+    const peak  = c.peakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end   = Math.min(c.rawIr.length, peak + post);
+    const slice = c.rawIr.slice(start, end);
+
+    // Issue 5: time axis is relative to the peak sample, then shifted by irXOffset
+    // peak is at sample index `peak`; start is `pre` samples before peak.
+    // So sample `start+i` is (start+i - peak)/sr seconds from the peak.
+    const peakTimeMs = (peak / sr) * 1000;          // absolute time of peak in ms
+    const timeMs = new Float32Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      const absoluteMs = ((start + i) / sr) * 1000;
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // peak → 0ms, then pan
+    }
+
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: use globalMax
+    traces.push({
+      x: timeMs, y: plotIr, name: c.name, mode: 'lines',
+      line: { color: c.color, width: 1 },
+      hovertemplate: '%{y:.1f}%<extra>' + c.name + '</extra>'
+    });
+  });
+
+  // ── Draw live curve ────────────────────────────────────────────────────────
+  if (latestIr) {
+    const liveName = nameInput.value || 'Live';
+    const peak  = latestPeakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end   = Math.min(latestIr.length, peak + post);
+    const slice = latestIr.slice(start, end);
+
+    const peakTimeMs = (peak / sr) * 1000;           // Issue 1: sr not 48000
+    const timeMs = new Float32Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      const absoluteMs = ((start + i) / sr) * 1000;  // Issue 1: sr not 48000
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // Issue 5: peak→0ms
+    }
+
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: globalMax not maxAmp
+    traces.push({
+      x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
+      line: { color: COLORS[colorIdx % COLORS.length], width: 1.5 },
+      hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>'
+    });
+  }
+
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange), { displayModeBar: false, responsive: true });
+}
+
 initPlot();
-setStatus('', 'Ready. Select hardware, configure parameters, and click RECORD SIGNAL.');
+initIrPlot();
 </script>
 </body>
 </html>
