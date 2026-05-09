@@ -149,7 +149,7 @@
 <header>
   <div class="logo">
     <span class="logo-name">FreqScope</span>
-    <span class="logo-tag">v2.0 Math Edition</span>
+    <span class="logo-tag">v2.1 Unified Edition</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
@@ -203,7 +203,7 @@
     </div>
 
     <div>
-      <div class="section-label">Processing</div>
+      <div class="section-label">FR Processing</div>
       <div class="param-row">
         <div class="param-label">
             <span>Smoothing</span>
@@ -233,14 +233,25 @@
     </div>
 
     <div>
+      <div class="section-label">IR Display Settings</div>
+      <div class="param-row">
+        <div class="param-label"><span>IR X-Offset</span><span class="param-value" id="ir-xoffset-val">0.0 ms</span></div>
+        <input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>IR Y-Range</span><span class="param-value" id="ir-yrange-val">±100%</span></div>
+        <input type="range" id="ir-yrange" min="1" max="100" step="1" value="100">
+      </div>
+    </div>
+
+    <div>
       <div class="section-label">View Mode</div>
       <div style="display:flex; gap:4px; margin-bottom: 24px;">
         <button class="btn-secondary" id="btn-view-fr" style="flex:1; border-color:var(--accent); color:var(--accent);">FR</button>
         <button class="btn-secondary" id="btn-view-ir" style="flex:1;">IR</button>
         <button class="btn-secondary" id="btn-view-both" style="flex:1;">BOTH</button>
       </div>
-    </div>
-	  <div class="section-label">Controls</div>
+      <div class="section-label">Controls</div>
       <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
         <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
@@ -270,8 +281,8 @@
     </div>
   </aside>
 
-  <div class="chart-area" id="chart-area-container" style="flex-direction: row; gap: 16px;">
-    <div id="fr-container" style="flex:1; display:flex; flex-direction:column; position:relative; min-width:0;">
+  <div class="chart-area" id="chart-area-container" style="flex-direction: column; gap: 16px; overflow-y: auto;">
+    <div id="fr-container" style="flex:1; display:flex; flex-direction:column; position:relative; min-width:0; min-height:400px;">
       <div class="chart-header">
         <div class="chart-title">Frequency Response</div>
         <div class="chart-meta">
@@ -284,11 +295,11 @@
       <div class="watermark">FREQSCOPE v2.1</div>
     </div>
     
-    <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0;">
+    <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0; min-height:400px;">
       <div class="chart-header">
         <div class="chart-title">Impulse Response</div>
       </div>
-      <div id="ir-plot" style="flex:1; min-height:420px; border:1px solid var(--border); border-radius:4px; background:var(--surface);"></div>
+      <div id="ir-plot" style="flex:1; border:1px solid var(--border); border-radius:4px; background:var(--surface);"></div>
     </div>
   </div>
 </main>
@@ -376,6 +387,8 @@ const btnScale      = $('btn-scale');
 const btnSubtract   = $('btn-subtract');
 const inDeviceSel   = $('input-device');
 const outDeviceSel  = $('output-device');
+const irXSlider     = $('ir-xoffset');
+const irYSlider     = $('ir-yrange');
 
 // ───────────────────────────────────────────────────────────────────
 //  Hardware Device Enumeration
@@ -434,9 +447,14 @@ function updateDisplays() {
   $('flo-val').textContent    = floSlider.value + ' Hz';
   $('fhi-val').textContent    = fhiSlider.value + ' Hz';
   $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
+  $('ir-xoffset-val').textContent = parseFloat(irXSlider.value).toFixed(1) + ' ms';
+  $('ir-yrange-val').textContent = '±' + irYSlider.value + '%';
 }
-[durSlider,volSlider,floSlider,fhiSlider,ySlider].forEach(s => s.addEventListener('input', updateDisplays));
-[normChk,ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
+
+[durSlider, volSlider, floSlider, fhiSlider, ySlider, irXSlider, irYSlider].forEach(s => s.addEventListener('input', updateDisplays));
+[normChk, ySlider].forEach(el => el.addEventListener('change', () => { if (latestFreqs) replot(); }));
+irXSlider.addEventListener('input', () => { if (latestIr || savedCurves.length > 0) replotIr(); });
+irYSlider.addEventListener('input', () => { if (latestIr || savedCurves.length > 0) replotIr(); });
 updateDisplays();
 
 function setStatus(state, msg) {
@@ -445,6 +463,14 @@ function setStatus(state, msg) {
   logText.textContent = msg;
 }
 function setProgress(pct) { progressBar.style.width = Math.min(100, Math.max(0, pct)) + '%'; }
+
+// Global visibility toggle function attached to the checkboxes
+window.toggleCurve = function(idx, isVisible) {
+  savedCurves[idx].visible = isVisible;
+  replot();
+  replotIr();
+  renderSavedList();
+};
 
 // ───────────────────────────────────────────────────────────────────
 //  WEB WORKER SOURCE
@@ -641,7 +667,12 @@ self.onmessage = function(e) {
      finalDb = smoothed.db;
   }
 
-  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, fftLen: gateSize, ir: ir });
+  // FIXED — transfer ir.buffer (zero-copy); worker can no longer use ir after this:
+  self.postMessage(
+    { type: 'done', freqs: finalFreqs, db: finalDb,
+      peakIdx, fftLen: gateSize, ir: ir },
+    [ir.buffer]   // ← second argument: list of Transferables
+  );
 };
 `;
 
@@ -661,7 +692,6 @@ function generateLogSweep(sr, dur, f1, f2) {
     const t = i / sr;
     buf[i] = Math.sin(2 * Math.PI * f1 * dur / K * (Math.exp(t / dur * K) - 1));
   }
-  // Fade in over 1 full cycle of the starting frequency to avoid startup clicks
   const fade_in = Math.min(Math.floor(sr / f1), Math.floor(n * 0.1));
   for (let i = 0; i < fade_in; i++) {
       buf[i] *= 0.5 * (1 - Math.cos(Math.PI * i / fade_in));
@@ -795,20 +825,21 @@ function replot() {
   const useNorm   = normChk.checked;
   const traces = [];
 
-savedCurves.forEach(c => {
+  savedCurves.forEach(c => {
+    if (c.visible === false) return; // Hooked to unified toggle visibility
     let db = c.rawDb.slice();
-    if (c.offset) db = db.map(v => v + c.offset);           // ← offset FIRST
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);  // ← normalize (raw+offset)
+    if (c.offset) db = db.map(v => v + c.offset);           
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);  
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
   });
 
-if (latestFreqs) {
+  if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
-	let db = latestDb.slice();
-    if (liveOffset) db = db.map(v => v + liveOffset);       // ← offset FIRST
-    if (useNorm) db = normalize(latestFreqs, db);            // ← normalize (raw+offset)
+    let db = latestDb.slice();
+    if (liveOffset) db = db.map(v => v + liveOffset);       
+    if (useNorm) db = normalize(latestFreqs, db);            
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
@@ -819,7 +850,6 @@ if (latestFreqs) {
   const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
   if(btnScale) btnScale.disabled = totalCurves < 1;
   if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
-  replotIr();
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -834,17 +864,16 @@ async function startRecording() {
   try {
     setStatus('processing', 'Initializing audio...');
     setProgress(10);
-	// Close any existing context first so we always start fresh with the correct output
-	if (audioCtx && audioCtx.state !== 'closed') {
-	  await audioCtx.close();
-	}
+    if (audioCtx && audioCtx.state !== 'closed') {
+      await audioCtx.close();
+    }
 
-	const selectedOutput = outDeviceSel.value;
-	const ctxOptions = { sampleRate: 48000 };
-	if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
-	  ctxOptions.sinkId = selectedOutput;
-	}
-	audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
+    const selectedOutput = outDeviceSel.value;
+    const ctxOptions = { sampleRate: 48000 };
+    if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
+      ctxOptions.sinkId = selectedOutput;
+    }
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
     
     capturedSR = audioCtx.sampleRate;
     $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
@@ -853,10 +882,23 @@ async function startRecording() {
     setProgress(20);
     
     const selectedInput = inDeviceSel.value;
-    const audioConstraints = { echoCancellation: false, noiseSuppression: false, autoGainControl: false, channelCount: 1 };
-    if (selectedInput) {
-      audioConstraints.deviceId = { exact: selectedInput };
-    }
+        const audioConstraints = { 
+          echoCancellation: false, 
+          noiseSuppression: false, 
+          autoGainControl: false, 
+          // Trick Android OS into "Music/Camcorder" mode instead of "Voice Call" mode
+          channelCount: { ideal: 2 }, 
+          // Force disable hidden Chrome Android hardware DSP filters
+		  sampleRate: { ideal: 48000 },
+		  // Disable all hidden Chrome Android hardware DSP
+          googAutoGainControl: false,
+          googNoiseSuppression: false,
+          googHighpassFilter: false,
+          googEchoCancellation: false
+        };
+        if (selectedInput) {
+          audioConstraints.deviceId = { exact: selectedInput };
+        }
 
     let stream;
     try {
@@ -874,7 +916,6 @@ async function startRecording() {
     setStatus('processing', 'Generating sweep...');
     setProgress(30);
 
-    // FIX: Generate internal sweep starting 2 octaves below user selection to avoid 20Hz edge ripples
     const actualFLo = Math.max(5, capturedFLo / 4);
     const actualFHi = Math.min(capturedSR / 2 * 0.95, capturedFHi * 1.2);
 
@@ -882,8 +923,8 @@ async function startRecording() {
       ? generateLogSweep(capturedSR, duration, actualFLo, actualFHi)
       : generatePinkNoise(capturedSR, duration);
     
-    capturedRef = new Float32Array(refSamples);  // store unscaled
-	for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; // scale for playback only
+    capturedRef = new Float32Array(refSamples); 
+    for (let i = 0; i < refSamples.length; i++) refSamples[i] *= volume; 
 
     const preSec  = 0.5, postSec = 1.0;
     const preN    = Math.floor(capturedSR * preSec);
@@ -919,7 +960,6 @@ async function startRecording() {
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
 
-    // FIX: Remove DC Offset (Microphone Bias) to stop 1/f spectral leakage into the low frequencies
     let dcSum = 0;
     for (let i = 0; i < capturedRec.length; i++) dcSum += capturedRec[i];
     const dcMean = dcSum / capturedRec.length;
@@ -992,11 +1032,12 @@ async function runAnalysis() {
     latestFreqs  = result.freqs;
     latestDb     = result.db;
     liveOffset   = 0;
-	latestIr      = result.ir;
+    latestIr      = result.ir;
     latestPeakIdx = result.peakIdx;
 
     setProgress(100);
     replot();
+    replotIr();
     
     const latMs = (result.peakIdx / capturedSR * 1000).toFixed(1);
     setStatus('ready', 'Done! ' + result.freqs.length + ' pts, IR peak at ' + latMs + ' ms');
@@ -1024,16 +1065,16 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset });
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset, visible: true });
   latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
-  renderSavedList(); replot();
+  renderSavedList(); replot(); replotIr();
   setStatus('ready', '"' + name + '" saved.');
 }
 
-function removeSaved(idx) { savedCurves.splice(idx, 1); renderSavedList(); replot(); }
+function removeSaved(idx) { savedCurves.splice(idx, 1); renderSavedList(); replot(); replotIr(); }
 
 function renderSavedList() {
   const el = $('saved-list');
@@ -1041,8 +1082,11 @@ function renderSavedList() {
     el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>';
     return;
   }
+  
+  // Appended unified visibility toggles natively to each list item
   el.innerHTML = savedCurves.map((c,i) =>
     '<div class="saved-item">' +
+    '<input type="checkbox" ' + (c.visible !== false ? 'checked' : '') + ' onchange="toggleCurve(' + i + ', this.checked)" title="Toggle Visibility" style="margin-right:6px; cursor:pointer;">' +
     '<div class="swatch" style="background:' + c.color + '"></div>' +
     '<div class="name">' + c.name + '</div>' +
     '<button onclick="removeSaved(' + i + ')" title="Remove">x</button>' +
@@ -1056,7 +1100,7 @@ function clearAll() {
   colorIdx = 0; measureCount = 1; liveOffset = 0;
   nameInput.value = 'Measurement 1';
   btnAnalyze.disabled = btnSave.disabled = btnExport.disabled = true;
-  renderSavedList(); replot(); initPlot();
+  renderSavedList(); replot(); replotIr();
   ['meta-sr','meta-fft','meta-pts'].forEach(id => $(id).textContent = '\u2014');
   setStatus('', 'Cleared. Ready for new measurements.');
   infoBox.innerHTML = 'Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>Microphone access required.<br>Use headphones to avoid feedback.';
@@ -1206,14 +1250,14 @@ function doSubtract() {
   function getScreenDb(val) {
       if (val === 'live') {
           let db = latestDb.slice();
-          if (useNorm) db = normalize(latestFreqs, db);
           if (liveOffset) db = db.map(v => v + liveOffset);
+          if (useNorm) db = normalize(latestFreqs, db);
           return { freqs: latestFreqs, db: db };
       } else {
           const c = savedCurves[parseInt(val)];
           let db = c.rawDb.slice();
-          if (useNorm && !c.isMath) db = normalize(c.freqs, db);
           if (c.offset) db = db.map(v => v + c.offset);
+          if (useNorm && !c.isMath) db = normalize(c.freqs, db);
           return { freqs: c.freqs, db: db };
       }
   }
@@ -1225,13 +1269,14 @@ function doSubtract() {
   const newDb = cA.db.map((val, i) => val - interDb[i]);
   
   const color = COLORS[colorIdx++ % COLORS.length];
-  savedCurves.push({ name: $('sub-name').value, freqs: cA.freqs, rawDb: newDb, offset: 0, color: color, isMath: true });
+  savedCurves.push({ name: $('sub-name').value, freqs: cA.freqs, rawDb: newDb, offset: 0, color: color, isMath: true, visible: true });
   
   renderSavedList();
   replot();
   closeModal();
   setStatus('ready', '"' + $('sub-name').value + '" created.');
 }
+
 // ───────────────────────────────────────────────────────────────────
 //  IR PLOTTING & VIEW LOGIC
 // ───────────────────────────────────────────────────────────────────
@@ -1256,9 +1301,10 @@ function setViewMode(mode) {
         frContainer.style.display = 'none'; irContainer.style.display = 'flex';
     } else {
         frContainer.style.display = 'flex'; irContainer.style.display = 'flex';
-        chartAreaContainer.style.flexDirection = window.innerWidth > 1000 ? 'row' : 'column';
+        // Always splits vertically (stacked top/bottom) when BOTH is active
+        chartAreaContainer.style.flexDirection = 'column'; 
     }
-    window.dispatchEvent(new Event('resize')); // Force Plotly to scale correctly
+    window.dispatchEvent(new Event('resize')); 
 }
 
 btnViewFr.addEventListener('click', () => setViewMode('fr'));
@@ -1269,7 +1315,7 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout() {
+function makeIrPlotLayout(yRange=100) {
   return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
@@ -1280,7 +1326,7 @@ function makeIrPlotLayout() {
     },
     yaxis:{ 
       title:{ text:'Amplitude (%)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
-      range:[-100, 100], gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
+      range:[-yRange, yRange], gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
       zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1 
     },
@@ -1292,55 +1338,84 @@ function makeIrPlotLayout() {
 }
 
 function replotIr() {
+  const irXOffset = parseFloat(irXSlider.value);
+  const irYRange = parseInt(irYSlider.value);
   const traces = [];
-  // Zoom window: plot from 2ms before peak to 15ms after peak (prevents UI lag)
-  const pre = Math.floor(48000 * 0.002); 
-  const post = Math.floor(48000 * 0.015);
+  
+  const sr   = capturedSR || 48000;
+  const pre  = Math.floor(sr * 0.002);
+  const post = Math.floor(sr * 0.100);
+  
+  let globalMax = 0;
+  const allIrCurves = [
+    ...savedCurves.filter(c => c.rawIr && c.visible !== false),
+    latestIr ? { rawIr: latestIr, peakIdx: latestPeakIdx } : null
+  ].filter(Boolean);
 
-  savedCurves.forEach(c => {
-    if (!c.rawIr) return; // Skip if it's a Math curve
-    const peak = c.peakIdx || 0;
+  allIrCurves.forEach(c => {
+    const peak  = c.peakIdx || 0;
     const start = Math.max(0, peak - pre);
-    const end = Math.min(c.rawIr.length, peak + post);
-    const slice = c.rawIr.slice(start, end);
-    
-    const timeMs = new Float32Array(slice.length);
-    let maxAmp = 0;
-    for (let i = 0; i < slice.length; i++) {
-       timeMs[i] = ((start + i) / 48000) * 1000;
-       if (Math.abs(slice[i]) > maxAmp) maxAmp = Math.abs(slice[i]);
+    const end   = Math.min(c.rawIr.length, peak + post);
+    for (let i = start; i < end; i++) {
+      if (Math.abs(c.rawIr[i]) > globalMax) globalMax = Math.abs(c.rawIr[i]);
     }
-    if (maxAmp === 0) maxAmp = 1;
-    const plotIr = slice.map(v => (v / maxAmp) * 100);
+  });
+  if (globalMax === 0) globalMax = 1;
+  
+  // ── Draw saved curves ──────────────────────────────────────────────────────
+  savedCurves.forEach(c => {
+    if (c.visible === false) return;
+    if (!c.rawIr) return;
 
-    traces.push({ x:timeMs, y:plotIr, name:c.name, mode:'lines',
-      line:{ color:c.color, width:1 },
-      hovertemplate:'%{y:.1f}%<extra>'+c.name+'</extra>' });
+    const peak  = c.peakIdx || 0;
+    const start = Math.max(0, peak - pre);
+    const end   = Math.min(c.rawIr.length, peak + post);
+    const slice = c.rawIr.slice(start, end);
+
+    // Issue 5: time axis is relative to the peak sample, then shifted by irXOffset
+    // peak is at sample index `peak`; start is `pre` samples before peak.
+    // So sample `start+i` is (start+i - peak)/sr seconds from the peak.
+    const peakTimeMs = (peak / sr) * 1000;          // absolute time of peak in ms
+    const timeMs = new Float32Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      const absoluteMs = ((start + i) / sr) * 1000;
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // peak → 0ms, then pan
+    }
+
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: use globalMax
+    traces.push({
+      x: timeMs, y: plotIr, name: c.name, mode: 'lines',
+      line: { color: c.color, width: 1 },
+      hovertemplate: '%{y:.1f}%<extra>' + c.name + '</extra>'
+    });
   });
 
+  // ── Draw live curve ────────────────────────────────────────────────────────
   if (latestIr) {
     const liveName = nameInput.value || 'Live';
-    const peak = latestPeakIdx || 0;
+    const peak  = latestPeakIdx || 0;
     const start = Math.max(0, peak - pre);
-    const end = Math.min(latestIr.length, peak + post);
+    const end   = Math.min(latestIr.length, peak + post);
     const slice = latestIr.slice(start, end);
-    
-    const timeMs = new Float32Array(slice.length);
-    let maxAmp = 0;
-    for (let i = 0; i < slice.length; i++) {
-       timeMs[i] = ((start + i) / 48000) * 1000;
-       if (Math.abs(slice[i]) > maxAmp) maxAmp = Math.abs(slice[i]);
-    }
-    if (maxAmp === 0) maxAmp = 1;
-    const plotIr = slice.map(v => (v / maxAmp) * 100);
 
-    traces.push({ x:timeMs, y:plotIr, name:liveName+' *', mode:'lines',
-      line:{ color:COLORS[colorIdx % COLORS.length], width:1.5 },
-      hovertemplate:'%{y:.1f}%<extra>'+liveName+'</extra>' });
+    const peakTimeMs = (peak / sr) * 1000;           // Issue 1: sr not 48000
+    const timeMs = new Float32Array(slice.length);
+    for (let i = 0; i < slice.length; i++) {
+      const absoluteMs = ((start + i) / sr) * 1000;  // Issue 1: sr not 48000
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // Issue 5: peak→0ms
+    }
+
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: globalMax not maxAmp
+    traces.push({
+      x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
+      line: { color: COLORS[colorIdx % COLORS.length], width: 1.5 },
+      hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>'
+    });
   }
 
-  Plotly.react('ir-plot', traces, makeIrPlotLayout(), { displayModeBar:false, responsive:true });
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange), { displayModeBar: false, responsive: true });
 }
+
 initPlot();
 initIrPlot();
 </script>
