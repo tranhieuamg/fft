@@ -211,8 +211,9 @@
         </div>
         <select id="smooth-val">
           <option value="3">1/3 Octave</option>
-          <option value="6" selected>1/6 Octave</option>
+          <option value="6">1/6 Octave</option>
           <option value="12">1/12 Octave</option>
+		  <option value="6" selected>1/24 Octave</option>
           <option value="0">None (Raw)</option>
         </select>
       </div>
@@ -235,8 +236,8 @@
     <div>
       <div class="section-label">IR Display Settings</div>
       <div class="param-row">
-        <div class="param-label"><span>IR X-Offset</span><span class="param-value" id="ir-xoffset-val">0.0 ms</span></div>
-        <input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0">
+        <div class="param-label"><span>IR X-Range</span><span class="param-value" id="ir-xoffset-val">±10 ms</span></div>
+        <input type="range" id="ir-xoffset" min="1" max="100" step="1" value="10">
       </div>
       <div class="param-row">
         <div class="param-label"><span>IR Y-Range</span><span class="param-value" id="ir-yrange-val">±100%</span></div>
@@ -447,7 +448,7 @@ function updateDisplays() {
   $('flo-val').textContent    = floSlider.value + ' Hz';
   $('fhi-val').textContent    = fhiSlider.value + ' Hz';
   $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
-  $('ir-xoffset-val').textContent = parseFloat(irXSlider.value).toFixed(1) + ' ms';
+  $('ir-xoffset-val').textContent = '±' + parseInt(irXSlider.value) + ' ms';
   $('ir-yrange-val').textContent = '±' + irYSlider.value + '%';
 }
 
@@ -470,6 +471,11 @@ window.toggleCurve = function(idx, isVisible) {
   replot();
   replotIr();
   renderSavedList();
+};
+window.togglePhase = function(idx) {
+  savedCurves[idx].phaseInverted = !savedCurves[idx].phaseInverted;
+  renderSavedList();  // re-render so button colour updates
+  replotIr();
 };
 
 // ───────────────────────────────────────────────────────────────────
@@ -1084,15 +1090,22 @@ function renderSavedList() {
   }
   
   // Appended unified visibility toggles natively to each list item
-  el.innerHTML = savedCurves.map((c,i) =>
+  el.innerHTML = savedCurves.map((c, i) =>
     '<div class="saved-item">' +
-    '<input type="checkbox" ' + (c.visible !== false ? 'checked' : '') + ' onchange="toggleCurve(' + i + ', this.checked)" title="Toggle Visibility" style="margin-right:6px; cursor:pointer;">' +
+    '<input type="checkbox" ' + (c.visible !== false ? 'checked' : '') +
+      ' onchange="toggleCurve(' + i + ', this.checked)" title="Toggle Visibility"' +
+      ' style="margin-right:6px; cursor:pointer;">' +
     '<div class="swatch" style="background:' + c.color + '"></div>' +
     '<div class="name">' + c.name + '</div>' +
+    // ← new phase button, only shown if the curve has IR data:
+    (c.rawIr ? '<button onclick="togglePhase(' + i + ')" title="Invert IR Phase"' +
+      ' style="font-size:10px; padding:1px 5px; border:1px solid ' +
+      (c.phaseInverted ? 'var(--accent2)' : 'var(--border)') + '; color:' +
+      (c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)') + '; border-radius:2px;">∅</button>' : '') +
     '<button onclick="removeSaved(' + i + ')" title="Remove">x</button>' +
     '</div>'
   ).join('');
-}
+  }
 
 function clearAll() {
   savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = null;
@@ -1316,20 +1329,21 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout(yRange=100) {
+function makeIrPlotLayout(yRange=100, xRange=10) {
   return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
-    xaxis:{ 
+    xaxis:{
       title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      range: [-xRange, xRange],   // ← symmetric window around 0ms (the IR peak)
       gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
     },
-    yaxis:{ 
+    yaxis:{
       title:{ text:'Amplitude (%)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
       range:[-yRange, yRange], gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
-      zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1 
+      zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1
     },
     legend:{ font:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
       bgcolor:'#111418', bordercolor:'#222830', borderwidth:1, x:0.01, y:0.99 },
@@ -1339,10 +1353,10 @@ function makeIrPlotLayout(yRange=100) {
 }
 
 function replotIr() {
-  const irXOffset = parseFloat(irXSlider.value);
+  const irXRange = parseInt(irXSlider.value);   // ← renamed, now means half-width
   const irYRange = parseInt(irYSlider.value);
   const traces = [];
-  
+
   const sr   = capturedSR || 48000;
   const pre  = Math.floor(sr * 0.002);
   const post = Math.floor(sr * 0.100);
@@ -1364,59 +1378,56 @@ function replotIr() {
   if (globalMax === 0) globalMax = 1;
   
   // ── Draw saved curves ──────────────────────────────────────────────────────
-  savedCurves.forEach(c => {
+savedCurves.forEach(c => {
     if (c.visible === false) return;
     if (!c.rawIr) return;
-
     const peak  = c.peakIdx || 0;
     const start = Math.max(0, peak - pre);
     const end   = Math.min(c.rawIr.length, peak + post);
-    const slice = c.rawIr.slice(start, end);
+    const slice = c.phaseInverted
+      ? c.rawIr.slice(start, end).map(v => -v)   // phase inversion (Change 2)
+      : c.rawIr.slice(start, end);
 
-    // Issue 5: time axis is relative to the peak sample, then shifted by irXOffset
-    // peak is at sample index `peak`; start is `pre` samples before peak.
-    // So sample `start+i` is (start+i - peak)/sr seconds from the peak.
-    const peakTimeMs = (peak / sr) * 1000;          // absolute time of peak in ms
+    const peakTimeMs = (peak / sr) * 1000;
     const timeMs = new Float32Array(slice.length);
     for (let i = 0; i < slice.length; i++) {
       const absoluteMs = ((start + i) / sr) * 1000;
-      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // peak → 0ms, then pan
+      timeMs[i] = absoluteMs - peakTimeMs;  // ← no irXOffset added here anymore
     }
-
-    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: use globalMax
-    traces.push({
-      x: timeMs, y: plotIr, name: c.name, mode: 'lines',
+    const plotIr = Array.from(slice).map(v => (v / globalMax) * 100);
+    traces.push({ x: timeMs, y: plotIr, name: c.name, mode: 'lines',
       line: { color: c.color, width: 1 },
-      hovertemplate: '%{y:.1f}%<extra>' + c.name + '</extra>'
-    });
+      hovertemplate: '%{y:.1f}%<extra>' + c.name + '</extra>' });
   });
 
-  // ── Draw live curve ────────────────────────────────────────────────────────
   if (latestIr) {
     const liveName = nameInput.value || 'Live';
     const peak  = latestPeakIdx || 0;
     const start = Math.max(0, peak - pre);
     const end   = Math.min(latestIr.length, peak + post);
     const slice = latestIr.slice(start, end);
-
-    const peakTimeMs = (peak / sr) * 1000;           // Issue 1: sr not 48000
+    const peakTimeMs = (peak / sr) * 1000;
     const timeMs = new Float32Array(slice.length);
     for (let i = 0; i < slice.length; i++) {
-      const absoluteMs = ((start + i) / sr) * 1000;  // Issue 1: sr not 48000
-      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // Issue 5: peak→0ms
+      const absoluteMs = ((start + i) / sr) * 1000;
+      timeMs[i] = absoluteMs - peakTimeMs;  // ← no irXOffset added here either
     }
-
-    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: globalMax not maxAmp
-    traces.push({
-      x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
+    const plotIr = Array.from(slice).map(v => (v / globalMax) * 100);
+    traces.push({ x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
       line: { color: COLORS[colorIdx % COLORS.length], width: 1.5 },
-      hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>'
-    });
+      hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>' });
   }
 
-  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange), { displayModeBar: false, responsive: true });
+  // Pass irXRange as second argument to layout
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange, irXRange), { displayModeBar:false, responsive:true });
 }
-
+savedCurves.push({
+    name, freqs: latestFreqs, rawDb: latestDb,
+    rawIr: latestIr, peakIdx: latestPeakIdx,
+    color, offset: liveOffset,
+    phaseInverted: false,   // ← add this
+    visible: true
+});
 initPlot();
 initIrPlot();
 </script>
