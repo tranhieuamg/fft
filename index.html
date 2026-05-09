@@ -211,9 +211,8 @@
         </div>
         <select id="smooth-val">
           <option value="3">1/3 Octave</option>
-          <option value="6" >1/6 Octave</option>
+          <option value="6" selected>1/6 Octave</option>
           <option value="12">1/12 Octave</option>
-		  <option value="24"selected>1/24 Octave</option>
           <option value="0">None (Raw)</option>
         </select>
       </div>
@@ -354,7 +353,7 @@
 <script>
 const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
 let colorIdx = 0, audioCtx = null;
-let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null, latestPeakVal = null, latestFftLen = null;
+let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
 let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
 let capturedRef = null;
@@ -599,7 +598,7 @@ function extractFR(ir, len, sr, fLo, fHi) {
       rawDb.push(20 * Math.log10(mag)); 
     }
   }
-  return { rawFreqs, rawDb, peakIdx, peakVal, gateSize: N };
+  return { rawFreqs, rawDb, peakIdx, gateSize: N };
 }
 
 function fastSmooth(freqs, db, fraction, numPoints, fLo, fHi) {
@@ -655,7 +654,7 @@ self.onmessage = function(e) {
   const { ir, len } = deconvolve(ref, rec);
 
   self.postMessage({ type:'progress', pct:50, msg:'Applying 1000ms Asymmetric Gate...' });
-  const { rawFreqs, rawDb, peakIdx, peakVal, gateSize } = extractFR(ir, len, sr, fLo, fHi);
+  const { rawFreqs, rawDb, peakIdx, gateSize } = extractFR(ir, len, sr, fLo, fHi);
 
   self.postMessage({ type:'progress', pct:80, msg:'Smoothing data...' });
   
@@ -669,7 +668,11 @@ self.onmessage = function(e) {
   }
 
   // FIXED — transfer ir.buffer (zero-copy); worker can no longer use ir after this:
-  self.postMessage({ type:'done', freqs: finalFreqs, db: finalDb, peakIdx, peakVal, fftLen: gateSize, ir: ir });
+  self.postMessage(
+    { type: 'done', freqs: finalFreqs, db: finalDb,
+      peakIdx, fftLen: gateSize, ir: ir },
+    [ir.buffer]   // ← second argument: list of Transferables
+  );
 };
 `;
 
@@ -807,12 +810,14 @@ function makePlotLayout(yRange=30) {
   };
 }
 
-function normalize(db, peakVal, fftLen) {
-    // ARTA Time-Domain IR Normalization
-    // Anchors the curve to the physical energy of the impulse, perfectly preserving relative L/R channel imbalances.
-    const irDb = 20 * Math.log10(peakVal);
-    const fftShift = 20 * Math.log10(fftLen / 2);
-    return db.map(v => v - irDb - fftShift);
+function normalize(freqs, db) {
+    let maxVal = -Infinity;
+    for (let i = 0; i < freqs.length; i++) {
+        if (freqs[i] >= 100 && freqs[i] <= 15000 && db[i] > maxVal)
+            maxVal = db[i];
+    }
+    if (maxVal === -Infinity) maxVal = Math.max(...db); // fallback
+    return db.map(v => v - maxVal);
 }
 
 function replot() {
@@ -821,14 +826,10 @@ function replot() {
   const traces = [];
 
   savedCurves.forEach(c => {
-    if (c.visible === false) return; 
+    if (c.visible === false) return; // Hooked to unified toggle visibility
     let db = c.rawDb.slice();
-    
-    // 1. Normalize based on physical IR energy
-    if (useNorm && !c.isMath && c.peakVal) db = normalize(db, c.peakVal, c.fftLen);  
-    // 2. Add manual slider offset LAST so it is not erased
     if (c.offset) db = db.map(v => v + c.offset);           
-    
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);  
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -837,10 +838,8 @@ function replot() {
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
     let db = latestDb.slice();
-    
-    if (useNorm && latestPeakVal) db = normalize(db, latestPeakVal, latestFftLen);            
     if (liveOffset) db = db.map(v => v + liveOffset);       
-    
+    if (useNorm) db = normalize(latestFreqs, db);            
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
@@ -1035,8 +1034,6 @@ async function runAnalysis() {
     liveOffset   = 0;
     latestIr      = result.ir;
     latestPeakIdx = result.peakIdx;
-	latestPeakVal = result.peakVal;
-    latestFftLen  = result.fftLen;
 
     setProgress(100);
     replot();
@@ -1068,8 +1065,8 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, peakVal:latestPeakVal, fftLen:latestFftLen, color, offset: liveOffset, visible: true });
-  latestFreqs = latestDb = latestIr = latestPeakIdx = latestPeakVal = latestFftLen = null;
+  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset, visible: true });
+  latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
   nameInput.value = 'Measurement ' + (++measureCount);
@@ -1098,7 +1095,7 @@ function renderSavedList() {
 }
 
 function clearAll() {
-  savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = latestPeakVal = latestFftLen = null;
+  savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   capturedRef = capturedRec = null;
   colorIdx = 0; measureCount = 1; liveOffset = 0;
   nameInput.value = 'Measurement 1';
@@ -1135,15 +1132,14 @@ function exportCSV() {
   const all = [];
   savedCurves.forEach(c => {
       let db = c.rawDb.slice();
-      // Normalize first, then add offset
-      if (useNorm && !c.isMath && c.peakVal) db = normalize(db, c.peakVal, c.fftLen);
       if (c.offset) db = db.map(v => v + c.offset);
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
       all.push({ name: c.name, freqs: c.freqs, db: db });
   });
   if (latestFreqs) {
       let db = latestDb.slice();
-      if (useNorm && latestPeakVal) db = normalize(db, latestPeakVal, latestFftLen);
       if (liveOffset) db = db.map(v => v + liveOffset);
+      if (useNorm) db = normalize(latestFreqs, db);
       all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
   }
 
@@ -1254,14 +1250,14 @@ function doSubtract() {
   function getScreenDb(val) {
       if (val === 'live') {
           let db = latestDb.slice();
-          if (useNorm && latestPeakVal) db = normalize(db, latestPeakVal, latestFftLen);
           if (liveOffset) db = db.map(v => v + liveOffset);
+          if (useNorm) db = normalize(latestFreqs, db);
           return { freqs: latestFreqs, db: db };
       } else {
           const c = savedCurves[parseInt(val)];
           let db = c.rawDb.slice();
-          if (useNorm && !c.isMath && c.peakVal) db = normalize(db, c.peakVal, c.fftLen);
           if (c.offset) db = db.map(v => v + c.offset);
+          if (useNorm && !c.isMath) db = normalize(c.freqs, db);
           return { freqs: c.freqs, db: db };
       }
   }
@@ -1319,13 +1315,12 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout(yRange=100, xOffset=0) {
+function makeIrPlotLayout(yRange=100) {
   return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
     xaxis:{ 
       title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
-      range:[-2 + xOffset, 15 + xOffset], // Forces the camera viewport to pan!
       gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
     },
@@ -1349,7 +1344,7 @@ function replotIr() {
   
   const sr   = capturedSR || 48000;
   const pre  = Math.floor(sr * 0.002);
-  const post = Math.floor(sr * 0.100); // Give plenty of tail buffer for scrolling
+  const post = Math.floor(sr * 0.100);
   
   let globalMax = 0;
   const allIrCurves = [
@@ -1367,6 +1362,7 @@ function replotIr() {
   });
   if (globalMax === 0) globalMax = 1;
   
+  // ── Draw saved curves ──────────────────────────────────────────────────────
   savedCurves.forEach(c => {
     if (c.visible === false) return;
     if (!c.rawIr) return;
@@ -1376,14 +1372,17 @@ function replotIr() {
     const end   = Math.min(c.rawIr.length, peak + post);
     const slice = c.rawIr.slice(start, end);
 
-    const peakTimeMs = (peak / sr) * 1000;          
+    // Issue 5: time axis is relative to the peak sample, then shifted by irXOffset
+    // peak is at sample index `peak`; start is `pre` samples before peak.
+    // So sample `start+i` is (start+i - peak)/sr seconds from the peak.
+    const peakTimeMs = (peak / sr) * 1000;          // absolute time of peak in ms
     const timeMs = new Float32Array(slice.length);
     for (let i = 0; i < slice.length; i++) {
       const absoluteMs = ((start + i) / sr) * 1000;
-      timeMs[i] = (absoluteMs - peakTimeMs); // Keep raw data anchored to 0ms
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // peak → 0ms, then pan
     }
 
-    const plotIr = slice.map(v => (v / globalMax) * 100); 
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: use globalMax
     traces.push({
       x: timeMs, y: plotIr, name: c.name, mode: 'lines',
       line: { color: c.color, width: 1 },
@@ -1391,6 +1390,7 @@ function replotIr() {
     });
   });
 
+  // ── Draw live curve ────────────────────────────────────────────────────────
   if (latestIr) {
     const liveName = nameInput.value || 'Live';
     const peak  = latestPeakIdx || 0;
@@ -1398,23 +1398,22 @@ function replotIr() {
     const end   = Math.min(latestIr.length, peak + post);
     const slice = latestIr.slice(start, end);
 
-    const peakTimeMs = (peak / sr) * 1000;           
+    const peakTimeMs = (peak / sr) * 1000;           // Issue 1: sr not 48000
     const timeMs = new Float32Array(slice.length);
     for (let i = 0; i < slice.length; i++) {
-      const absoluteMs = ((start + i) / sr) * 1000;  
-      timeMs[i] = (absoluteMs - peakTimeMs); 
+      const absoluteMs = ((start + i) / sr) * 1000;  // Issue 1: sr not 48000
+      timeMs[i] = (absoluteMs - peakTimeMs) + irXOffset; // Issue 5: peak→0ms
     }
 
-    const plotIr = slice.map(v => (v / globalMax) * 100); 
+    const plotIr = slice.map(v => (v / globalMax) * 100); // Issue 2: globalMax not maxAmp
     traces.push({
-      x: timeMs, y: plotIr, name: liveName+' *', mode: 'lines',
+      x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
       line: { color: COLORS[colorIdx % COLORS.length], width: 1.5 },
       hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>'
     });
   }
 
-  // Pass irXOffset to layout generator so the viewport pans
-  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange, irXOffset), { displayModeBar:false, responsive:true });
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange), { displayModeBar: false, responsive: true });
 }
 
 initPlot();
