@@ -882,20 +882,20 @@ async function startRecording() {
     setProgress(20);
     
     const selectedInput = inDeviceSel.value;
+    
+        // The "Nuclear" constraints to force raw audio on stubborn Android builds
         const audioConstraints = { 
-          echoCancellation: false, 
-          noiseSuppression: false, 
-          autoGainControl: false, 
-          // Trick Android OS into "Music/Camcorder" mode instead of "Voice Call" mode
+          echoCancellation: { exact: false }, 
+          noiseSuppression: { exact: false }, 
+          autoGainControl: { exact: false }, 
           channelCount: { ideal: 2 }, 
-          // Force disable hidden Chrome Android hardware DSP filters
-		  sampleRate: { ideal: 48000 },
-		  // Disable all hidden Chrome Android hardware DSP
+          sampleRate: { ideal: 48000 }, 
           googAutoGainControl: false,
           googNoiseSuppression: false,
           googHighpassFilter: false,
           googEchoCancellation: false
         };
+    
         if (selectedInput) {
           audioConstraints.deviceId = { exact: selectedInput };
         }
