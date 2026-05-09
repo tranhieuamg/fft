@@ -211,8 +211,9 @@
         </div>
         <select id="smooth-val">
           <option value="3">1/3 Octave</option>
-          <option value="6" selected>1/6 Octave</option>
+          <option value="6" >1/6 Octave</option>
           <option value="12">1/12 Octave</option>
+		  <option value="24"selected>1/24 Octave</option>
           <option value="0">None (Raw)</option>
         </select>
       </div>
@@ -1315,12 +1316,13 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout(yRange=100) {
-  return {
+function makeIrPlotLayout(yRange=100, xOffset=0) {
+return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
     xaxis:{ 
       title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
+      range:[-2 + xOffset, 15 + xOffset], // Force the viewport to pan with the slider
       gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
     },
@@ -1413,7 +1415,7 @@ function replotIr() {
     });
   }
 
-  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange), { displayModeBar: false, responsive: true });
+  Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange, irXOffset), { displayModeBar:false, responsive:true });
 }
 
 initPlot();
