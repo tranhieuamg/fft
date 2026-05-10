@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>SORANIK RTA — Frequency Real-Time Analysis</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
+ <style>
+ @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
 
   :root {
     --bg: #0a0c0f; --surface: #111418; --surface2: #181c22;
@@ -16,169 +16,173 @@
     --mono: 'Share Tech Mono', monospace; --sans: 'Barlow', sans-serif;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { background:var(--bg); color:var(--text); font-family:var(--sans);
-         font-weight:300; min-height:100vh; display:flex; flex-direction:column; }
-
-  header { display:flex; align-items:center; justify-content:space-between;
-           padding:18px 32px; border-bottom:1px solid var(--border); background:var(--surface); }
-  .logo { display:flex; align-items:baseline; gap:10px; }
-  .logo-name { font-family:var(--mono); font-size:22px; color:var(--accent); letter-spacing:2px; }
-  .logo-tag  { font-size:11px; color:var(--text-dim); letter-spacing:3px; text-transform:uppercase; }
-  .status-bar { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; color:var(--text-dim); }
-  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-dim); transition:background 0.3s; }
-  .status-dot.ready      { background:var(--green); box-shadow:0 0 6px var(--green); }
-  .status-dot.recording  { background:var(--red);   box-shadow:0 0 8px var(--red); animation:pulse 0.8s infinite; }
-  .status-dot.processing { background:var(--accent); box-shadow:0 0 6px var(--accent); }
-  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
-
-  main { display:grid; grid-template-columns:280px 1fr; flex:1; }
-
-  .sidebar { background:var(--surface); border-right:1px solid var(--border);
-             padding:24px 20px; display:flex; flex-direction:column; gap:24px; overflow-y:auto; }
-  .section-label { font-family:var(--mono); font-size:10px; letter-spacing:3px; color:var(--text-dim);
-                   text-transform:uppercase; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
-  .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
-  .param-row { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
-  .param-label { font-size:11px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase;
-                 display:flex; justify-content:space-between; align-items:center; }
-  .param-value { font-family:var(--mono); font-size:13px; color:var(--accent); }
-
-  input[type=range] { -webkit-appearance:none; width:100%; height:3px; background:var(--border);
-                      border-radius:2px; outline:none; cursor:pointer; }
-  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px;
-    border-radius:50%; background:var(--accent); box-shadow:0 0 6px var(--accent); cursor:pointer; }
-  select { width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text);
-           font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px;
-           outline:none; cursor:pointer; appearance:none; text-overflow:ellipsis; }
-  select:focus { border-color:var(--accent); }
-
-  .btn-primary { width:100%; padding:13px; background:transparent; border:1px solid var(--accent);
-    color:var(--accent); font-family:var(--mono); font-size:13px; letter-spacing:2px;
-    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s;
-    position:relative; overflow:hidden; }
-  .btn-primary::before { content:''; position:absolute; inset:0; background:var(--accent); opacity:0; transition:opacity 0.2s; }
-  .btn-primary:hover::before { opacity:0.08; }
-  .btn-primary:active { transform:scale(0.98); }
-  .btn-primary:disabled { border-color:var(--border); color:var(--text-dim); cursor:not-allowed; }
-  .btn-primary:disabled::before { display:none; }
-  
-  .btn-analyze { border-color: var(--green); color: var(--green); }
-  .btn-analyze::before { background: var(--green); }
-
-  .btn-secondary { width:100%; padding:10px; background:transparent; border:1px solid var(--border);
-    color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:2px;
-    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s; }
-  .btn-secondary:hover { border-color:var(--accent2); color:var(--accent2); }
-  .btn-secondary:disabled { opacity:0.3; cursor:not-allowed; }
-
-  .btn-danger { width:100%; padding:10px; background:transparent; border:1px solid var(--border);
-    color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:2px;
-    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s; }
-  .btn-danger:hover { border-color:var(--red); color:var(--red); }
-
-  .chart-area { display:flex; flex-direction:column; padding:24px; gap:16px; overflow:hidden; position:relative; }
-  .chart-header { display:flex; align-items:center; justify-content:space-between; }
-  .chart-title { font-family:var(--mono); font-size:13px; color:var(--text-dim); letter-spacing:2px; text-transform:uppercase; }
-  .chart-meta { display:flex; gap:20px; font-family:var(--mono); font-size:11px; color:var(--text-dim); }
-  .chart-meta span { color:var(--text); }
-  #plot { flex:1; min-height:420px; border:1px solid var(--border); border-radius:4px; background:var(--surface); }
-
-  .log-panel { background:var(--surface); border-top:1px solid var(--border); padding:10px 24px;
-               font-family:var(--mono); font-size:11px; color:var(--text-dim);
-               display:flex; align-items:center; gap:12px; min-height:38px; }
-  #log-text { color:var(--text); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .progress-bar-wrap { width:180px; flex-shrink:0; height:3px; background:var(--border); border-radius:2px; overflow:hidden; }
-  .progress-bar { height:100%; width:0%; background:var(--accent); border-radius:2px;
-                  transition:width 0.15s linear; box-shadow:0 0 6px var(--accent); }
-
-  .toggle-row { display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:10px; }
-  .toggle { position:relative; width:36px; height:20px; }
-  .toggle input { opacity:0; width:0; height:0; }
-  .slider-track { position:absolute; inset:0; background:var(--border); border-radius:20px; cursor:pointer; transition:background 0.2s; }
-  .toggle input:checked + .slider-track { background:var(--accent); }
-  .slider-track::before { content:''; position:absolute; width:14px; height:14px; left:3px; top:3px;
-                           background:white; border-radius:50%; transition:transform 0.2s; }
-  .toggle input:checked + .slider-track::before { transform:translateX(16px); }
-
-  .info-box { padding:10px 12px; background:var(--surface2); border-left:2px solid var(--accent);
-              font-size:11px; line-height:1.7; color:var(--text-dim); }
-  .watermark { position:absolute; bottom:60px; right:30px; font-family:var(--mono); font-size:10px;
-               color:var(--border); letter-spacing:2px; pointer-events:none; user-select:none; }
-  ::-webkit-scrollbar { width:4px; }
-  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
-/* Mobile and Tablet Adaptation */
-  @media (max-width: 900px) {
-    main { 
-      display: flex; 
-      flex-direction: column; 
-    }
-    .sidebar { 
-      border-right: none; 
-      border-bottom: 1px solid var(--border); 
-      max-height: 45vh; /* Keeps controls scrollable on the top half of the screen */
-    }
-    header { 
-      padding: 12px 16px; 
-    }
-    .chart-area {
-      padding: 16px;
-    }
-    #plot { 
-      min-height: 400px; 
-    }
-    
-    /* Enlarges slider thumbs for easier touch interaction on Android */
-    input[type=range]::-webkit-slider-thumb {
-      width: 24px; 
-      height: 24px;
-    }
+  body { 
+    background:var(--bg); color:var(--text); font-family:var(--sans);
+    height: 100vh; display:flex; flex-direction:column; overflow: hidden; 
   }
-  
-  .ov-row {
-  display: grid;
-  grid-template-columns: 36px 28px 110px 1fr 160px;
-  gap: 0;
-  align-items: center;
-  background: var(--surface2);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  font-family: var(--mono);
-  font-size: 11px;
-  min-height: 36px;
-  transition: border-color 0.15s;
-}
-.ov-row:hover { border-color: var(--accent); }
-.ov-cell { padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ov-cell-name {
-  padding: 6px 8px; color: var(--text); cursor: pointer;
-  text-decoration: underline dotted; text-underline-offset: 3px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.ov-cell-name:hover { color: var(--accent); }
-.ov-cell-color {
-  padding: 6px 8px; cursor: pointer; display: flex; align-items: center;
-}
-.ov-swatch {
-  width: 16px; height: 16px; border-radius: 3px; border: 2px solid var(--border);
-  cursor: pointer; transition: border-color 0.15s; flex-shrink: 0;
-}
-.ov-swatch:hover { border-color: white; }
-.ov-timestamp { padding: 6px 8px; color: var(--text-dim); font-size: 10px; }
 
-</style>
+  header { 
+    display:flex; align-items:center; justify-content:space-between;
+    padding:8px 24px; border-bottom:1px solid var(--border); background:var(--surface); 
+  }
+  .logo-name { font-family:var(--mono); font-size:20px; color:var(--accent); letter-spacing:2px; }
+
+  /* Toolbars */
+  .toolbar {
+    display: flex; align-items: center; gap: 16px; padding: 8px 20px;
+    background: var(--surface2); border-bottom: 1px solid var(--border);
+    flex-wrap: wrap; z-index: 10;
+  }
+  .toolbar.bottom { border-bottom: none; border-top: 1px solid var(--border); }
+  
+  .toolbar-group { display: flex; align-items: center; gap: 10px; border-right: 1px solid var(--border); padding-right: 16px; }
+  .toolbar-label { font-family: var(--mono); font-size: 10px; color: var(--text-dim); text-transform: uppercase; }
+
+  /* Charts */
+  main { flex: 1; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); }
+  .chart-container { flex: 1; position: relative; min-height: 0; display: flex; flex-direction: column; }
+  #plot, #ir-plot { flex: 1; min-height: 0; }
+
+  /* Popover Slider Buttons */
+  .param-container { position: relative; display: inline-block; }
+  .param-btn {
+    background: var(--surface); border: 1px solid var(--border); color: var(--accent);
+    font-family: var(--mono); font-size: 12px; padding: 6px 12px; border-radius: 4px; cursor: pointer;
+    min-width: 100px; text-align: left;
+  }
+  .param-btn:hover { border-color: var(--accent); }
+  .slider-popover {
+    display: none; position: absolute; top: 100%; left: 0; background: var(--surface2);
+    border: 1px solid var(--accent); padding: 12px; border-radius: 4px; width: 200px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); z-index: 100;
+  }
+  .param-container:focus-within .slider-popover { display: block; }
+
+  /* Inputs & Buttons */
+  select, input[type=text] { 
+    background:var(--surface); border:1px solid var(--border); color:var(--text);
+    font-family:var(--mono); font-size:12px; padding:5px 8px; border-radius:4px; outline:none;
+  }
+  .btn-primary, .btn-secondary, .btn-danger {
+    padding: 6px 14px; font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+    text-transform: uppercase; cursor: pointer; border-radius: 4px; border: 1px solid var(--border);
+    background: transparent; color: var(--text); transition: all 0.2s;
+  }
+  .btn-primary { border-color: var(--accent); color: var(--accent); }
+  .btn-primary:hover { background: var(--accent); color: var(--bg); }
+  .btn-danger:hover { border-color: var(--red); color: var(--red); }
+  
+  .status-bar { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-dim); }
+  .status-dot.ready { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .status-dot.recording { background:var(--red); animation:pulse 0.8s infinite; }
+ </style>
 </head>
 <body>
 
 <header>
   <div class="logo">
-    <span class="logo-name">soranikrta</span>
-    <span class="logo-tag">v2.1 Unified Edition</span>
+    <span class="logo-name">SORANIK RTA</span>
   </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text">IDLE</span>
   </div>
 </header>
+
+<div class="toolbar">
+  <div class="toolbar-group">
+    <span class="toolbar-label">Hardware</span>
+    <select id="input-device" style="max-width:140px;"><option value="">Mic</option></select>
+    <select id="output-device" style="max-width:140px;"><option value="">Output</option></select>
+    <button class="btn-secondary" id="btn-refresh-dev" style="font-size:18px; padding:2px 8px;">&#8635;</button>
+  </div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">Signal</span>
+    <select id="sweep-type"><option value="logsweep">LogSweep</option><option value="pinknoise">Pink</option></select>
+    
+    <div class="param-container">
+      <button class="param-btn" id="dur-btn">Dur: 2.0s</button>
+      <div class="slider-popover">
+        <input type="range" id="duration" min="1" max="8" step="0.5" value="2" style="width:100%">
+      </div>
+    </div>
+
+    <div class="param-container">
+      <button class="param-btn" id="vol-btn">Vol: 80%</button>
+      <div class="slider-popover">
+        <input type="range" id="volume" min="10" max="100" step="5" value="80" style="width:100%">
+      </div>
+    </div>
+
+    <div class="param-container">
+      <button class="param-btn" id="freq-btn">20Hz - 20kHz</button>
+      <div class="slider-popover">
+        <div class="toolbar-label">Low Freq</div>
+        <input type="range" id="freq-lo" min="10" max="200" step="10" value="20" style="width:100%; margin-bottom:10px;">
+        <div class="toolbar-label">High Freq</div>
+        <input type="range" id="freq-hi" min="5000" max="20000" step="1000" value="20000" style="width:100%">
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; justify-content:flex-end; gap:8px;">
+    <button class="btn-primary" id="btn-record">&#9679; RECORD</button>
+    <button class="btn-primary" id="btn-analyze" disabled>&#9654; ANALYZE</button>
+    <button class="btn-secondary" id="btn-view-fr">FR</button>
+    <button class="btn-secondary" id="btn-view-ir">IR</button>
+    <button class="btn-secondary" id="btn-view-both">BOTH</button>
+  </div>
+</div>
+
+<main>
+  <div class="chart-container" id="fr-container">
+    <div id="plot"></div>
+  </div>
+  <div class="chart-container" id="ir-container" style="display:none; border-top: 1px solid var(--border);">
+    <div id="ir-plot"></div>
+  </div>
+</main>
+
+<div class="toolbar bottom">
+  <div class="toolbar-group">
+    <span class="toolbar-label">FR Proc</span>
+    <select id="smooth-val">
+      <option value="3">1/3 Oct</option><option value="6" selected>1/6 Oct</option>
+      <option value="12">1/12 Oct</option><option value="24">1/24 Oct</option><option value="0">Raw</option>
+    </select>
+    <label style="font-size:11px; display:flex; align-items:center; gap:4px;">
+      Norm <input type="checkbox" id="norm-toggle" checked>
+    </label>
+    <input type="range" id="yrange" min="10" max="60" step="5" value="30" style="width:80px">
+    <input type="text" id="curve-name" placeholder="Name" style="width:100px;">
+  </div>
+
+  <div class="toolbar-group">
+    <span class="toolbar-label">IR Settings</span>
+    <div class="param-container">
+      <button class="param-btn" id="ir-x-btn">X: 0.0ms</button>
+      <div class="slider-popover">
+        <input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0" style="width:100%">
+      </div>
+    </div>
+    <div class="param-container">
+      <button class="param-btn" id="ir-y-btn">Y: ±100%</button>
+      <div class="slider-popover">
+        <input type="range" id="ir-yrange" min="1" max="100" step="1" value="100" style="width:100%">
+      </div>
+    </div>
+  </div>
+
+  <div style="flex:1; display:flex; gap:8px; justify-content:flex-end;">
+    <button class="btn-secondary" id="btn-scale">SCALE</button>
+    <button class="btn-secondary" id="btn-subtract">SUB</button>
+    <button class="btn-secondary" id="btn-edit-overlays">OVERLAYS</button>
+    <button class="btn-secondary" onclick="savePng()">PNG</button>
+    <button class="btn-secondary" id="btn-save">SAVE</button>
+    <button class="btn-danger" id="btn-clear">CLEAR</button>
+  </div>
+</div>
 
 <main>
   <aside class="sidebar">
@@ -553,13 +557,21 @@ updateDeviceLists();
 //  UI Updaters
 // ───────────────────────────────────────────────────────────────────
 function updateDisplays() {
-  $('dur-val').textContent    = parseFloat(durSlider.value).toFixed(1) + ' s';
-  $('vol-val').textContent    = volSlider.value + '%';
-  $('flo-val').textContent    = floSlider.value + ' Hz';
-  $('fhi-val').textContent    = fhiSlider.value + ' Hz';
-  $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
-  $('ir-xoffset-val').textContent = '±' + parseInt(irXSlider.value) + ' ms';
-  $('ir-yrange-val').textContent = '±' + irYSlider.value + '%';
+  const dur = parseFloat(durSlider.value).toFixed(1);
+  const vol = volSlider.value;
+  const flo = floSlider.value;
+  const fhi = fhiSlider.value;
+  
+  $('dur-btn').textContent = `Dur: ${dur}s`;
+  $('vol-btn').textContent = `Vol: ${vol}%`;
+  $('freq-btn').textContent = `${flo}Hz - ${fhi >= 1000 ? (fhi/1000)+'k' : fhi}Hz`;
+  
+  $('ir-x-btn').textContent = `X: ${parseFloat(irXSlider.value).toFixed(1)}ms`;
+  $('ir-y-btn').textContent = `Y: ±${irYSlider.value}%`;
+  
+  // Keep your metadata labels updated if you still use them
+  if($('dur-val')) $('dur-val').textContent = dur + ' s';
+  if($('vol-val')) $('vol-val').textContent = vol + '%';
 }
 
 [durSlider, volSlider, floSlider, fhiSlider, ySlider, irXSlider, irYSlider].forEach(s => s.addEventListener('input', updateDisplays));
