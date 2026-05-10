@@ -142,6 +142,38 @@
       height: 24px;
     }
   }
+  
+  .ov-row {
+  display: grid;
+  grid-template-columns: 36px 28px 110px 1fr 160px;
+  gap: 0;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  min-height: 36px;
+  transition: border-color 0.15s;
+}
+.ov-row:hover { border-color: var(--accent); }
+.ov-cell { padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-cell-name {
+  padding: 6px 8px; color: var(--text); cursor: pointer;
+  text-decoration: underline dotted; text-underline-offset: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ov-cell-name:hover { color: var(--accent); }
+.ov-cell-color {
+  padding: 6px 8px; cursor: pointer; display: flex; align-items: center;
+}
+.ov-swatch {
+  width: 16px; height: 16px; border-radius: 3px; border: 2px solid var(--border);
+  cursor: pointer; transition: border-color 0.15s; flex-shrink: 0;
+}
+.ov-swatch:hover { border-color: white; }
+.ov-timestamp { padding: 6px 8px; color: var(--text-dim); font-size: 10px; }
+
 </style>
 </head>
 <body>
@@ -264,16 +296,12 @@
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
           <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
         </div>
-        <button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
+		<button class="btn-secondary" id="btn-png">SAVE PNG</button>  <!-- ← add this -->
+        <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
+		<button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
 
-    <div>
-      <div class="section-label">Saved Curves</div>
-      <div class="saved-list" id="saved-list">
-        <div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>
-      </div>
-    </div>
 
     <div class="info-box" id="info-box">
       Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>
@@ -348,11 +376,102 @@
       <button class="btn-primary" style="width:auto; padding:8px 16px;" onclick="doSubtract()">SUBTRACT</button>
     </div>
   </div>
+  
+  <div id="modal-overlays" style="display:none; background:var(--surface); border:1px solid var(--border);
+  padding:24px; border-radius:4px; width:780px; max-width:95vw; max-height:85vh;
+  flex-direction:column; gap:16px; overflow:hidden;">
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:2px;">
+      OVERLAYS &nbsp;<span id="overlays-count" style="color:var(--text-dim); font-size:11px;"></span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="btn-save-overlays"
+        style="width:auto; padding:8px 14px; font-size:10px;">SAVE FILE</button>
+      <label class="btn-secondary"
+        style="width:auto; padding:8px 14px; font-size:10px; cursor:pointer; margin:0;">
+        LOAD FILE
+        <input type="file" id="load-overlays-input" accept=".txt"
+          style="display:none;" onchange="loadOverlays(event)">
+      </label>
+      <button class="btn-secondary" onclick="closeModal()"
+        style="width:auto; padding:8px 14px; font-size:10px;">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- Table header -->
+  <div style="display:grid; grid-template-columns:36px 28px 110px 1fr 160px;
+    gap:0; font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    letter-spacing:2px; text-transform:uppercase; flex-shrink:0; padding:0 4px;">
+    <div id="col-vis" onclick="sortOverlays('vis')" title="Show / Hide all"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">👁</div>
+    <div id="col-color" onclick="sortOverlays('color')" title="Group by color"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">●</div>
+    <div style="padding:6px 4px; color:var(--border);">PHASE</div>
+    <div id="col-name" onclick="sortOverlays('name')" title="Sort by name"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">NAME ↕</div>
+    <div id="col-time" onclick="sortOverlays('time')" title="Sort by time"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">TIMESTAMP ↕</div>
+  </div>
+
+  <!-- Scrollable rows -->
+  <div id="overlays-body"
+    style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:2px; padding:0 4px;">
+  </div>
+
+</div>
+  <div id="modal-edit" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:340px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); ...">EDIT CURVE</div>
+  <div class="param-row">
+    <label class="param-label">Name</label>
+    <input type="text" id="edit-name-input" style="width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px; outline:none;">
+  </div>
+
+  <div class="param-row">
+    <div class="param-label">Color</div>
+    <div id="edit-color-grid" style="display:grid; grid-template-columns:repeat(10,1fr); gap:6px; margin-top:4px;"></div>
+  </div>
+
+  <div style="font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; margin-top:-4px;">
+    SAVED: <span id="edit-timestamp" style="color:var(--text);">—</span>
+  </div>
+
+  <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+    <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">CANCEL</button>
+    <button class="btn-primary"   style="width:auto; padding:8px 16px;" onclick="commitEdit()">APPLY</button>
+  </div>
+</div>
 
 </div>
 
 <script>
-const COLORS = ['#00e5ff','#ff6b35','#39ff85','#ff3d5a','#c8b4ff','#ffe566','#ff85c8','#85c8ff'];
+const COLORS = [
+  '#00e5ff', // cyan
+  '#ff6b35', // orange
+  '#39ff85', // green
+  '#ff3d5a', // red
+  '#c8b4ff', // lavender
+  '#ffe566', // yellow
+  '#ff85c8', // pink
+  '#85c8ff', // sky blue
+  '#ff4fff', // magenta
+  '#40ffb0', // mint
+  '#ffaa00', // amber
+  '#7fffaa', // spring green
+  '#ff7070', // salmon
+  '#aad4ff', // powder blue
+  '#d4ff70', // lime
+  '#ffb3de', // rose
+  '#70d4ff', // light blue
+  '#ffd4aa', // peach
+  '#b0ff40', // yellow-green
+  '#e0aaff', // wisteria
+];
+
+let overlaysSortKey = 'time';
+let overlaysSortDir = 1; // 1 = asc, -1 = desc
+
 let colorIdx = 0, audioCtx = null;
 let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
 let isMeasuring = false, measureCount = 1, liveOffset = 0;
@@ -1083,29 +1202,177 @@ function saveCurve() {
 function removeSaved(idx) { savedCurves.splice(idx, 1); renderSavedList(); replot(); replotIr(); }
 
 function renderSavedList() {
-  const el = $('saved-list');
+  // Sidebar list removed — overlays modal is the primary list UI.
+  // If the overlays modal is currently open, refresh it.
+  if ($('modal-overlays').style.display === 'flex') {
+    renderOverlays();
+  }
+}
+
+// ── Overlays modal ──────────────────────────────────────────────────
+
+function openOverlays() {
+  renderOverlays();
+  $('modal-overlays').style.display = 'flex';
+  $('modal-scale').style.display   = 'none';
+  $('modal-sub').style.display     = 'none';
+  $('modal-edit').style.display    = 'none';
+  $('modal-overlay').style.display = 'flex';
+}
+
+function renderOverlays() {
+  const body = $('overlays-body');
+  $('overlays-count').textContent = savedCurves.length + ' curve' + (savedCurves.length !== 1 ? 's' : '');
+
   if (!savedCurves.length) {
-    el.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px 0;">No saved curves</div>';
+    body.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:24px 0;">No saved curves</div>';
     return;
   }
-  
-  // Appended unified visibility toggles natively to each list item
-  el.innerHTML = savedCurves.map((c, i) =>
-    '<div class="saved-item">' +
-    '<input type="checkbox" ' + (c.visible !== false ? 'checked' : '') +
-      ' onchange="toggleCurve(' + i + ', this.checked)" title="Toggle Visibility"' +
-      ' style="margin-right:6px; cursor:pointer;">' +
-    '<div class="swatch" style="background:' + c.color + '"></div>' +
-    '<div class="name">' + c.name + '</div>' +
-    // ← new phase button, only shown if the curve has IR data:
-    (c.rawIr ? '<button onclick="togglePhase(' + i + ')" title="Invert IR Phase"' +
-      ' style="font-size:10px; padding:1px 5px; border:1px solid ' +
-      (c.phaseInverted ? 'var(--accent2)' : 'var(--border)') + '; color:' +
-      (c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)') + '; border-radius:2px;">∅</button>' : '') +
-    '<button onclick="removeSaved(' + i + ')" title="Remove">x</button>' +
-    '</div>'
-  ).join('');
+
+  // Build sorted index array — we sort indices, not the array itself,
+  // so savedCurves indices remain stable for onclick handlers.
+  const indices = savedCurves.map((_, i) => i);
+  indices.sort((a, b) => {
+    const ca = savedCurves[a], cb = savedCurves[b];
+    let va, vb;
+    if (overlaysSortKey === 'name') {
+      va = ca.name.toLowerCase(); vb = cb.name.toLowerCase();
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'color') {
+      va = ca.color; vb = cb.color;
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'time') {
+      va = ca.savedAt || ''; vb = cb.savedAt || '';
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    return 0; // 'vis' — no sort, just toggle all
+  });
+
+  body.innerHTML = indices.map(i => {
+    const c = savedCurves[i];
+    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">∅</span>' : '<span style="color:var(--border)">Inv</span>');
+    return `<div class="ov-row">
+      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
+        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
+          onchange="toggleCurve(${i}, this.checked)"
+          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
+      </div>
+      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color">
+        <div class="ov-swatch" style="background:${c.color};" title="${c.color}"></div>
+      </div>
+      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
+        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
+          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
+          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
+          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">∅</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
+        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
+      </div>
+      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
+      <div class="ov-timestamp">${c.savedAt || '—'}</div>
+    </div>`;
+  }).join('');
+}
+
+function sortOverlays(key) {
+  if (key === 'vis') {
+    // Toggle all visible / all hidden
+    const anyVisible = savedCurves.some(c => c.visible !== false);
+    savedCurves.forEach(c => c.visible = !anyVisible);
+    replot(); replotIr();
+    renderOverlays();
+    return;
   }
+  if (overlaysSortKey === key) {
+    overlaysSortDir *= -1; // flip direction
+  } else {
+    overlaysSortKey = key;
+    overlaysSortDir = 1;
+  }
+  // Update header arrows
+  ['col-name','col-time','col-color'].forEach(id => {
+    const el = $(id);
+    if (!el) return;
+    const label = id === 'col-name' ? 'NAME' : id === 'col-time' ? 'TIMESTAMP' : '●';
+    const isActive = (id === 'col-name' && key === 'name') ||
+                     (id === 'col-time' && key === 'time') ||
+                     (id === 'col-color' && key === 'color');
+    el.textContent = label + (isActive ? (overlaysSortDir === 1 ? ' ↑' : ' ↓') : ' ↕');
+  });
+  renderOverlays();
+}
+
+// ── Save overlays to .txt ──────────────────────────────────────────
+function saveOverlays() {
+  if (!savedCurves.length) return;
+
+  const payload = savedCurves.map(c => ({
+    name:          c.name,
+    color:         c.color,
+    savedAt:       c.savedAt || '',
+    visible:       c.visible !== false,
+    offset:        c.offset  || 0,
+    phaseInverted: c.phaseInverted || false,
+    isMath:        c.isMath  || false,
+    freqs:         Array.from(c.freqs),
+    rawDb:         Array.from(c.rawDb)
+    // rawIr intentionally omitted — too large for a text file (~8MB per curve)
+    // IR display will be unavailable after reload, but FR data is fully preserved
+  }));
+
+  const json      = JSON.stringify(payload, null, 2);
+  const ts        = new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
+  const filename  = `freqscope-${savedCurves.length}curves-${ts}.txt`;
+  const a         = document.createElement('a');
+  a.href          = URL.createObjectURL(new Blob([json], { type:'text/plain' }));
+  a.download      = filename;
+  a.click();
+  setStatus('ready', `Saved ${savedCurves.length} curves to ${filename}`);
+}
+
+// ── Load overlays from .txt ────────────────────────────────────────
+function loadOverlays(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const parsed = JSON.parse(e.target.result);
+      if (!Array.isArray(parsed)) throw new Error('Invalid format');
+
+      let loaded = 0;
+      parsed.forEach(item => {
+        if (!item.freqs || !item.rawDb) return; // skip malformed entries
+        savedCurves.push({
+          name:          item.name  || 'Loaded Curve',
+          color:         item.color || COLORS[colorIdx % COLORS.length],
+          savedAt:       item.savedAt || file.name,
+          visible:       item.visible !== false,
+          offset:        item.offset  || 0,
+          phaseInverted: item.phaseInverted || false,
+          isMath:        item.isMath  || false,
+          freqs:         new Float32Array(item.freqs),
+          rawDb:         new Float32Array(item.rawDb),
+          rawIr:         null,  // IR not stored in file
+          peakIdx:       null
+        });
+        colorIdx++;
+        loaded++;
+      });
+
+      renderSavedList();
+      renderOverlays();
+      replot();
+      setStatus('ready', `Loaded ${loaded} curves from ${file.name}`);
+    } catch(err) {
+      setStatus('', 'Load failed: ' + err.message);
+    }
+    // Reset file input so the same file can be loaded again if needed
+    event.target.value = '';
+  };
+  reader.readAsText(file);
+}
 
 function clearAll() {
   savedCurves = []; latestFreqs = latestDb = latestIr = latestPeakIdx = null;
@@ -1175,6 +1442,39 @@ function exportCSV() {
   a.download = 'freqscope_export.csv';
   a.click();
 }
+
+function savePng() {
+  // Determine which plot(s) are currently visible
+  const frVisible = $('fr-container').style.display !== 'none';
+  const irVisible = $('ir-container').style.display !== 'none';
+
+  // Plotly.downloadImage targets a single div by id.
+  // If both are visible, export FR first then IR as separate files.
+  const timestamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+
+  if (frVisible) {
+    Plotly.downloadImage('plot', {
+      format: 'png',
+      width: 1600,
+      height: 800,
+      filename: 'freqscope-FR-' + timestamp
+    });
+  }
+
+  if (irVisible) {
+    // Small delay so two simultaneous downloads don't collide
+    setTimeout(() => {
+      Plotly.downloadImage('ir-plot', {
+        format: 'png',
+        width: 1600,
+        height: 800,
+        filename: 'freqscope-IR-' + timestamp
+      });
+    }, irVisible && frVisible ? 600 : 0);
+  }
+}
+
+$('btn-png').addEventListener('click', savePng);
 
 btnRecord.addEventListener('click', startRecording);
 btnAnalyze.addEventListener('click', runAnalysis);
@@ -1254,6 +1554,79 @@ function closeModal() {
   $('modal-overlay').style.display = 'none';
 }
 
+let editingIdx = null;
+let editOpenedFromOverlays = false;
+let editingColor = null;
+
+function openEditModal(idx) {
+  editingIdx = idx;
+  editOpenedFromOverlays = $('modal-overlays').style.display === 'flex'; // ← add this
+  const c = savedCurves[idx];
+  editingColor = c.color;
+
+  $('edit-name-input').value = c.name;
+  $('edit-timestamp').textContent = c.savedAt || '—';
+
+  // Build color swatches
+  const grid = $('edit-color-grid');
+  grid.innerHTML = '';
+  COLORS.forEach(col => {
+    const swatch = document.createElement('div');
+    swatch.style.cssText = `
+      width:100%; aspect-ratio:1; border-radius:3px; cursor:pointer;
+      background:${col};
+      border: 2px solid ${col === editingColor ? '#ffffff' : 'transparent'};
+      box-sizing:border-box; transition: border-color 0.15s;
+    `;
+    swatch.title = col;
+    swatch.addEventListener('click', () => {
+      editingColor = col;
+      // Update all swatches to show new selection
+      grid.querySelectorAll('div').forEach(s => {
+        s.style.borderColor = s.title === editingColor ? '#ffffff' : 'transparent';
+      });
+    });
+    grid.appendChild(swatch);
+  });
+  $('modal-overlays').style.display = 'none'; // hide overlays while editing
+  $('modal-edit').style.display = 'flex';
+  $('modal-scale').style.display = 'none';
+  $('modal-sub').style.display = 'none';
+  $('modal-overlay').style.display = 'flex';
+
+  // Focus and select the name input
+  setTimeout(() => {
+    $('edit-name-input').focus();
+    $('edit-name-input').select();
+  }, 50);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  $('edit-name-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') commitEdit();
+    if (e.key === 'Escape') closeModal();
+  });
+});
+
+function commitEdit() {
+  if (editingIdx === null) return;
+  const newName = $('edit-name-input').value.trim();
+  if (newName) savedCurves[editingIdx].name = newName;
+  savedCurves[editingIdx].color = editingColor;
+  editingIdx = null;
+  editingColor = null;
+  renderSavedList();
+  replot();
+  replotIr();
+  // Return to overlays modal if that's where we came from
+  if (editOpenedFromOverlays) {
+    editOpenedFromOverlays = false;
+    openOverlays();
+  } else {
+    closeModal();
+  }
+}
+
 function doSubtract() {
   const valA = $('sub-a-sel').value;
   const valB = $('sub-b-sel').value;
@@ -1324,6 +1697,9 @@ function setViewMode(mode) {
 btnViewFr.addEventListener('click', () => setViewMode('fr'));
 btnViewIr.addEventListener('click', () => setViewMode('ir'));
 btnViewBoth.addEventListener('click', () => setViewMode('both'));
+
+$('btn-overlays').addEventListener('click', openOverlays);
+$('btn-save-overlays').addEventListener('click', saveOverlays);
 
 function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
@@ -1426,7 +1802,8 @@ savedCurves.push({
     rawIr: latestIr, peakIdx: latestPeakIdx,
     color, offset: liveOffset,
     phaseInverted: false,   // ← add this
-    visible: true
+    visible: true,
+	savedAt: new Date().toLocaleString()   // ← overlay timestamp
 });
 initPlot();
 initIrPlot();
