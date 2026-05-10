@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>FreqScope — Frequency Response Analyzer</title>
+<title>SORANIK RTA — Frequency Real-Time Analysis</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
@@ -91,15 +91,6 @@
   .progress-bar { height:100%; width:0%; background:var(--accent); border-radius:2px;
                   transition:width 0.15s linear; box-shadow:0 0 6px var(--accent); }
 
-  .saved-list { display:flex; flex-direction:column; gap:6px; max-height:150px; overflow-y:auto; }
-  .saved-item { display:flex; align-items:center; gap:8px; padding:6px 10px;
-                background:var(--surface2); border:1px solid var(--border); border-radius:3px;
-                font-family:var(--mono); font-size:11px; }
-  .saved-item .swatch { width:10px; height:10px; border-radius:50%; flex-shrink:0; }
-  .saved-item .name { flex:1; color:var(--text); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .saved-item button { background:none; border:none; color:var(--text-dim); cursor:pointer; font-size:13px; padding:0 2px; transition:color 0.2s; }
-  .saved-item button:hover { color:var(--red); }
-
   .toggle-row { display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:10px; }
   .toggle { position:relative; width:36px; height:20px; }
   .toggle input { opacity:0; width:0; height:0; }
@@ -180,7 +171,7 @@
 
 <header>
   <div class="logo">
-    <span class="logo-name">FreqScope</span>
+    <span class="logo-name">soranikrta</span>
     <span class="logo-tag">v2.1 Unified Edition</span>
   </div>
   <div class="status-bar">
@@ -321,7 +312,7 @@
         </div>
       </div>
       <div id="plot"></div>
-      <div class="watermark">FREQSCOPE v2.1</div>
+      <div class="watermark">SORANIK RTA v2.1</div>
     </div>
     
     <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0; min-height:400px;">
@@ -379,7 +370,7 @@
   
   <div id="modal-overlays" style="display:none; background:var(--surface); border:1px solid var(--border);
   padding:24px; border-radius:4px; width:780px; max-width:95vw; max-height:85vh;
-  flex-direction:column; gap:16px; overflow:hidden;">
+  flex-direction:column; gap:16px; overflow:hidden;">>
 
   <div style="display:flex; align-items:center; justify-content:space-between;
     border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
@@ -422,7 +413,7 @@
 
 </div>
   <div id="modal-edit" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:340px; gap:16px; flex-direction:column;">
-    <div style="font-family:var(--mono); color:var(--accent); ...">EDIT CURVE</div>
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">EDIT CURVE</div>
   <div class="param-row">
     <label class="param-label">Name</label>
     <input type="text" id="edit-name-input" style="width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px; outline:none;">
@@ -953,8 +944,8 @@ function replot() {
   savedCurves.forEach(c => {
     if (c.visible === false) return; // Hooked to unified toggle visibility
     let db = c.rawDb.slice();
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       
-    if (c.offset) db = db.map(v => v + c.offset);      
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       // ← normalize first
+    if (c.offset) db = db.map(v => v + c.offset);                // ← offset survives
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -963,8 +954,8 @@ function replot() {
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
     let db = latestDb.slice();
-    if (liveOffset) db = db.map(v => v + liveOffset);       
-    if (useNorm) db = normalize(latestFreqs, db);            
+    if (liveOffset) db = db.map(v => v + liveOffset);            // offset before normalize
+    if (useNorm) db = normalize(latestFreqs, db);                // normalize cancels it = correct
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
@@ -1252,7 +1243,7 @@ function renderOverlays() {
 
   body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">∅</span>' : '<span style="color:var(--border)">Inv</span>');
+    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
     return `<div class="ov-row">
       <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
@@ -1266,7 +1257,7 @@ function renderOverlays() {
         ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
           style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
           color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
-          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">∅</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
+          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
         ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
       </div>
       <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
@@ -1323,7 +1314,7 @@ function saveOverlays() {
 
   const json      = JSON.stringify(payload, null, 2);
   const ts        = new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
-  const filename  = `freqscope-${savedCurves.length}curves-${ts}.txt`;
+  const filename  = `soranikrta-${savedCurves.length}curves-${ts}.txt`;
   const a         = document.createElement('a');
   a.href          = URL.createObjectURL(new Blob([json], { type:'text/plain' }));
   a.download      = filename;
@@ -1412,14 +1403,14 @@ function exportCSV() {
   const all = [];
   savedCurves.forEach(c => {
       let db = c.rawDb.slice();
-      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
-      if (c.offset) db = db.map(v => v + c.offset);
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);           // normalize first
+      if (c.offset) db = db.map(v => v + c.offset);                    // offset after
       all.push({ name: c.name, freqs: c.freqs, db: db });
   });
   if (latestFreqs) {
       let db = latestDb.slice();
-      if (liveOffset) db = db.map(v => v + liveOffset);
-      if (useNorm) db = normalize(latestFreqs, db);
+      if (liveOffset) db = db.map(v => v + liveOffset);                // offset before normalize
+      if (useNorm) db = normalize(latestFreqs, db);                    // normalize cancels it = correct
       all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
   }
 
@@ -1439,7 +1430,7 @@ function exportCSV() {
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
-  a.download = 'freqscope_export.csv';
+  a.download = 'soranikrta_export.csv';
   a.click();
 }
 
@@ -1457,7 +1448,7 @@ function savePng() {
       format: 'png',
       width: 1600,
       height: 800,
-      filename: 'freqscope-FR-' + timestamp
+      filename: 'soranikrta-FR-' + timestamp
     });
   }
 
@@ -1468,7 +1459,7 @@ function savePng() {
         format: 'png',
         width: 1600,
         height: 800,
-        filename: 'freqscope-IR-' + timestamp
+        filename: 'soranikrta-IR-' + timestamp
       });
     }, irVisible && frVisible ? 600 : 0);
   }
@@ -1797,16 +1788,6 @@ savedCurves.forEach(c => {
   // Pass irXRange as second argument to layout
   Plotly.react('ir-plot', traces, makeIrPlotLayout(irYRange, irXRange), { displayModeBar:false, responsive:true });
 }
-savedCurves.push({
-    name, freqs: latestFreqs, rawDb: latestDb,
-    rawIr: latestIr, peakIdx: latestPeakIdx,
-    color, offset: liveOffset,
-    phaseInverted: false,   // ← add this
-    visible: true,
-	savedAt: new Date().toLocaleString()   // ← overlay timestamp
-});
-initPlot();
-initIrPlot();
 </script>
 </body>
 </html>
