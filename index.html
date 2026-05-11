@@ -851,55 +851,6 @@ function replot() {
   if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
 }
 
-function exportCSV() {
-  const useNorm = normChk.checked;
-  const all = [];
-  
-  savedCurves.forEach(c => {
-    let db = Array.from(c.rawDb);
-    // 1. Align Offset
-    if (c.alignOffset) db = db.map(v => v + c.alignOffset);
-    // 2. Normalize (using spectral peak logic)
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);
-    // 3. Display Offset
-    if (c.displayOffset) db = db.map(v => v + c.displayOffset);
-    
-    all.push({ name: c.name, freqs: c.freqs, db: db });
-  });
-
-  if (latestFreqs) {
-    let db = Array.from(latestDb);
-    if (liveAlignOffset) db = db.map(v => v + liveAlignOffset);
-    if (useNorm) db = normalize(latestFreqs, db);
-    if (liveDisplayOffset) db = db.map(v => v + liveDisplayOffset);
-    
-    all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
-  }
-
-  if (!all.length) return;
-  
-  let csv = 'Frequency (Hz),' + all.map(c => '"' + c.name + '"').join(',') + '\n';
-  const ref = all[0];
-  for (let i = 0; i < ref.freqs.length; i++) {
-    const row = [ref.freqs[i].toFixed(2)];
-    for (const c of all) {
-      if (c === ref) {
-        row.push(c.db[i].toFixed(3));
-      } else {
-        const val = interpolateDb([ref.freqs[i]], c.freqs, c.db)[0];
-        row.push(val.toFixed(3));
-      }
-    }
-    csv += row.join(',') + '\n';
-  }
-  
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `soranikrta_export_${new Date().getTime()}.csv`;
-  a.click();
-}
 // ───────────────────────────────────────────────────────────────────
 //  STEP 1: RECORDING
 // ───────────────────────────────────────────────────────────────────
@@ -1400,7 +1351,7 @@ function exportCSV() {
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
-  a.download = 'soranikrta_export.csv';
+  a.download = `soranikrta_export_${new Date().getTime()}.csv`;
   a.click();
 }
 
