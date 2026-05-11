@@ -1112,34 +1112,79 @@ function openOverlays() {
 
 function renderOverlays() {
   const body = $('overlays-body');
+  
+  // Update the count label at the top of the modal
   $('overlays-count').textContent = savedCurves.length + ' curve' + (savedCurves.length !== 1 ? 's' : '');
 
+  // 1. THE SAFE EMPTY STATE CHECK
+  // This prevents the silent crash by returning early if there are no curves to map
   if (!savedCurves.length) {
-    body.innerHTML = indices.map(i => {
+    body.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-dim); font-family:var(--mono);">No curves saved.</div>';
+    return;
+  }
+
+  // 2. Build sorted index array 
+  // We sort indices, not the array itself, so savedCurves indices remain stable for onclick handlers
+  const indices = savedCurves.map((_, i) => i);
+  indices.sort((a, b) => {
+    const ca = savedCurves[a], cb = savedCurves[b];
+    let va, vb;
+    if (overlaysSortKey === 'name') {
+      va = ca.name.toLowerCase(); vb = cb.name.toLowerCase();
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'color') {
+      va = ca.color; vb = cb.color;
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'time') {
+      va = ca.savedAt || ''; vb = cb.savedAt || '';
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    return 0; // 'vis' — no sort, just toggle all
+  });
+
+  // 3. Render the grid rows
+  body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    return `<div class="ov-row" style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px; align-items:center; border-bottom:1px solid var(--border); padding:6px 0; gap:8px;">
-      <div class="ov-cell" style="display:flex; justify-content:center;">
-        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
-          onchange="toggleCurve(${i}, this.checked)"
+    return `
+    <div class="ov-row" style="display:grid; grid-template-columns:50px 50px 70px 1fr 180px; gap:12px; align-items:center; padding:10px 0; border-bottom:1px solid var(--border);">
+      
+      <div style="display:flex; justify-content:center;">
+        <input type="checkbox" ${c.visible !== false ? 'checked' : ''} 
+          onchange="toggleCurve(${i}, this.checked)" 
           style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
       </div>
-      <div class="ov-cell" onclick="openEditModal(${i})" style="display:flex; justify-content:center; cursor:pointer;">
-        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,0.2);"></div>
+
+      <div style="display:flex; justify-content:center;">
+        <div onclick="openEditModal(${i})" 
+          style="background:${c.color}; width:14px; height:14px; border-radius:50%; cursor:pointer; border:1px solid rgba(255,255,255,0.2);"
+          title="Click to edit color/name"></div>
       </div>
-      <div class="ov-cell" style="display:flex; align-items:center; gap:4px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" 
-          style="background:${c.phaseInverted ? 'var(--accent2)' : 'transparent'}; 
-          border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--bg)' : 'var(--text-dim)'};
-          border-radius:2px; padding:2px 4px; cursor:pointer; font-family:var(--mono); font-size:10px;">INV</button>` : ''}
-        ${c.isMath ? `<span style="color:var(--text-dim); font-size:9px; border:1px solid var(--border); padding:1px 3px; border-radius:2px;">MATH</span>` : ''}
+
+      <div style="display:flex; justify-content:center;">
+        ${c.rawIr ? `
+          <button onclick="togglePhase(${i}); renderOverlays();" 
+            style="background:${c.phaseInverted ? 'var(--accent2)' : 'transparent'}; 
+            border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
+            color:${c.phaseInverted ? 'var(--bg)' : 'var(--text-dim)'};
+            border-radius:2px; padding:2px 6px; cursor:pointer; font-family:var(--mono); font-size:10px;">INV</button>
+        ` : '<span style="color:var(--border); font-size:9px;">N/A</span>'}
       </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:12px; padding-left:4px;">${c.name}</div>
-      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim); text-align:right; padding-right:10px;">${c.savedAt || '—'}</div>
+
+      <div onclick="openEditModal(${i})" 
+        style="cursor:pointer; color:var(--text); font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; padding-left:4px;">
+        ${c.name} 
+        ${c.isMath ? '<span style="color:var(--accent); font-size:8px; margin-left:6px; border:1px solid var(--accent); padding:1px 3px; border-radius:2px; vertical-align:middle;">MATH</span>' : ''}
+      </div>
+
+      <div style="font-family:var(--mono); font-size:11px; color:var(--text-dim); text-align:right; padding-right:10px;">
+        ${c.savedAt || '—'}
+      </div>
+
     </div>`;
   }).join('');
-  return;
-  }
+}
 
   // Build sorted index array — we sort indices, not the array itself,
   // so savedCurves indices remain stable for onclick handlers.
@@ -1577,7 +1622,12 @@ function doSubtract() {
     
     // Interpolate B onto A's frequency points
     const interDb = interpolateDb(cA.freqs, cB.freqs, cB.db);
-    const newDb = cA.db.map((val, i) => val - interDb[i]);
+    
+    // FORCE STRICT TYPED ARRAY FOR THE RESULT
+    const newDb = new Float32Array(cA.db.length);
+    for(let i = 0; i < cA.db.length; i++) {
+        newDb[i] = cA.db[i] - interDb[i];
+    }
     
     const color = COLORS[colorIdx++ % COLORS.length];
     
@@ -1594,7 +1644,7 @@ function doSubtract() {
     });
     
     // UI Refresh
-    closeModal(); // This is the critical fix for the "unresponsive" issue
+    closeModal(); 
     renderSavedList();
     replot();
     setStatus('ready', '"' + $('sub-name').value + '" created.');
