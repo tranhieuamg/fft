@@ -244,24 +244,15 @@
   padding:24px; border-radius:4px; width:780px; max-width:95vw; max-height:85vh;
   flex-direction:column; gap:16px; overflow:hidden;">
 
-  <div style="display:flex; align-items:center; justify-content:space-between;
-    border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
-    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:2px;">
-      OVERLAYS &nbsp;<span id="overlays-count" style="color:var(--text-dim); font-size:11px;"></span>
-    </div>
-    <div style="display:flex; gap:8px;">
-      <button class="btn-secondary" id="btn-save-overlays"
-        style="width:auto; padding:8px 14px; font-size:10px;">SAVE FILE</button>
-      <label class="btn-secondary"
-        style="width:auto; padding:8px 14px; font-size:10px; cursor:pointer; margin:0;">
-        LOAD FILE
-        <input type="file" id="load-overlays-input" accept=".txt"
-          style="display:none;" onchange="loadOverlays(event)">
-      </label>
-      <button class="btn-secondary" onclick="closeModal()"
-        style="width:auto; padding:8px 14px; font-size:10px;">CLOSE</button>
-    </div>
-  </div>
+<div style="display:grid; grid-template-columns:50px 50px 70px 1fr 180px;
+  gap:12px; font-family:var(--mono); font-size:10px; color:var(--text-dim);
+  letter-spacing:1px; text-transform:uppercase; flex-shrink:0; padding:10px 0; border-bottom:2px solid var(--border);">
+  <div id="col-vis" onclick="sortOverlays('vis')" style="cursor:pointer; text-align:center;">Show</div>
+  <div id="col-color" onclick="sortOverlays('color')" style="cursor:pointer; text-align:center;">Color</div>
+  <div style="text-align:center;">Phase</div>
+  <div id="col-name" onclick="sortOverlays('name')" style="cursor:pointer; text-align:left;">Name ↕</div>
+  <div id="col-time" onclick="sortOverlays('time')" style="cursor:pointer; text-align:right; padding-right:10px;">Timestamp ↕</div>
+</div>
 
   <!-- Table header -->
   <div style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px;
@@ -1060,6 +1051,7 @@ async function runAnalysis() {
 // ───────────────────────────────────────────────────────────────────
 //  Save / Export / Clear
 // ───────────────────────────────────────────────────────────────────
+
 function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
@@ -1109,83 +1101,7 @@ function openOverlays() {
   $('modal-edit').style.display    = 'none';
   $('modal-overlay').style.display = 'flex';
 }
-
-function renderOverlays() {
-  const body = $('overlays-body');
-  $('overlays-count').textContent = savedCurves.length + ' curve' + (savedCurves.length !== 1 ? 's' : '');
-
-  if (!savedCurves.length) {
-    body.innerHTML = indices.map(i => {
-    const c = savedCurves[i];
-    return `<div class="ov-row" style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px; align-items:center; border-bottom:1px solid var(--border); padding:6px 0; gap:8px;">
-      <div class="ov-cell" style="display:flex; justify-content:center;">
-        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
-          onchange="toggleCurve(${i}, this.checked)"
-          style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
-      </div>
-      <div class="ov-cell" onclick="openEditModal(${i})" style="display:flex; justify-content:center; cursor:pointer;">
-        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,0.2);"></div>
-      </div>
-      <div class="ov-cell" style="display:flex; align-items:center; gap:4px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" 
-          style="background:${c.phaseInverted ? 'var(--accent2)' : 'transparent'}; 
-          border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--bg)' : 'var(--text-dim)'};
-          border-radius:2px; padding:2px 4px; cursor:pointer; font-family:var(--mono); font-size:10px;">INV</button>` : ''}
-        ${c.isMath ? `<span style="color:var(--text-dim); font-size:9px; border:1px solid var(--border); padding:1px 3px; border-radius:2px;">MATH</span>` : ''}
-      </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:12px; padding-left:4px;">${c.name}</div>
-      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim); text-align:right; padding-right:10px;">${c.savedAt || '—'}</div>
-    </div>`;
-  }).join('');
-  return;
-  }
-
-  // Build sorted index array — we sort indices, not the array itself,
-  // so savedCurves indices remain stable for onclick handlers.
-  const indices = savedCurves.map((_, i) => i);
-  indices.sort((a, b) => {
-    const ca = savedCurves[a], cb = savedCurves[b];
-    let va, vb;
-    if (overlaysSortKey === 'name') {
-      va = ca.name.toLowerCase(); vb = cb.name.toLowerCase();
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    if (overlaysSortKey === 'color') {
-      va = ca.color; vb = cb.color;
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    if (overlaysSortKey === 'time') {
-      va = ca.savedAt || ''; vb = cb.savedAt || '';
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    return 0; // 'vis' — no sort, just toggle all
-  });
-
-  body.innerHTML = indices.map(i => {
-    const c = savedCurves[i];
-    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
-    return `<div class="ov-row">
-      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
-        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
-          onchange="toggleCurve(${i}, this.checked)"
-          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
-      </div>
-      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color">
-        <div class="ov-swatch" style="background:${c.color};" title="${c.color}"></div>
-      </div>
-      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
-          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
-          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
-        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
-      </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
-      <div class="ov-timestamp">${c.savedAt || '—'}</div>
-    </div>`;
-  }).join('');
-}
+}).join('');
 
 function sortOverlays(key) {
   if (key === 'vis') {
@@ -1349,9 +1265,16 @@ function exportCSV() {
     }
     csv += row.join(',') + '\n';
   }
+
+  // --- TIMESTAMP FIX START ---
+  // Generates: YYYY-MM-DD-HH-MM-SS
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+  const filename = `soranikrta-export-${all.length}curves-${ts}.csv`;
+  // --- TIMESTAMP FIX END ---
+
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
-  a.download = `soranikrta_export_${new Date().getTime()}.csv`;
+  a.download = filename; // Uses the new dynamic filename
   a.click();
 }
 
