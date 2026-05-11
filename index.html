@@ -82,18 +82,34 @@
     <button class="btn-secondary" id="btn-refresh-dev" style="padding:2px 8px;">&#8635;</button>
   </div>
 
-  <div class="toolbar-group" style="border:none;">
-  <span class="toolbar-label">IR Settings</span>
+  <!-- ADD this group to the top toolbar, after the Hardware group -->
+<div class="toolbar-group">
+  <span class="toolbar-label">Signal</span>
+  <select id="sweep-type">
+    <option value="logsweep">Log Sweep</option>
+    <option value="pinknoise">Pink Noise</option>
+  </select>
   <div class="param-container">
-    <button class="param-btn" id="ir-x-btn" tabindex="0">Pan: 0.0ms</button>
+    <button class="param-btn" id="dur-btn" tabindex="0">Dur: 2.0s</button>
     <div class="slider-popover">
-      <input type="range" id="ir-xoffset" min="-20" max="20" step="0.1" value="0" style="width:100%">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Duration: <span id="dur-val">2.0 s</span></div>
+      <input type="range" id="duration" min="1" max="8" step="0.5" value="2" style="width:100%">
     </div>
   </div>
   <div class="param-container">
-    <button class="param-btn" id="ir-y-btn" tabindex="0">Zoom: ±100%</button>
+    <button class="param-btn" id="vol-btn" tabindex="0">Vol: 80%</button>
     <div class="slider-popover">
-      <input type="range" id="ir-yrange" min="1" max="100" step="1" value="100" style="width:100%">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Volume: <span id="vol-val">80%</span></div>
+      <input type="range" id="volume" min="10" max="100" step="5" value="80" style="width:100%">
+    </div>
+  </div>
+  <div class="param-container">
+    <button class="param-btn" id="freq-btn" tabindex="0">Range: 20-20k</button>
+    <div class="slider-popover">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">Freq Low: <span id="flo-val">20 Hz</span></div>
+      <input type="range" id="freq-lo" min="10" max="200" step="10" value="20" style="width:100%;margin-bottom:8px;">
+      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">Freq High: <span id="fhi-val">20000 Hz</span></div>
+      <input type="range" id="freq-hi" min="5000" max="20000" step="1000" value="20000" style="width:100%">
     </div>
   </div>
 </div>
@@ -124,6 +140,7 @@
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">PNG</button>
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
         </div>
+        <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
         <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
@@ -139,6 +156,19 @@
   </div>
 </main>
 
+<!-- ADD this between </main> and the bottom toolbar -->
+<div style="display:flex; align-items:center; gap:12px; padding:4px 16px;
+  background:var(--surface2); border-top:1px solid var(--border);
+  font-family:var(--mono); font-size:10px; color:var(--text-dim);">
+  <span id="log-text" style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Ready.</span>
+  <span>SR: <span id="meta-sr">—</span></span>
+  <span>FFT: <span id="meta-fft">—</span></span>
+  <span>Pts: <span id="meta-pts">—</span></span>
+  <div style="width:120px; height:3px; background:var(--border); border-radius:2px; overflow:hidden; flex-shrink:0;">
+    <div id="progress-bar" style="height:100%; width:0%; background:var(--accent); border-radius:2px; transition:width 0.15s linear;"></div>
+  </div>
+</div>
+
 <div class="toolbar bottom">
   <div class="toolbar-group">
     <span class="toolbar-label">FR Proc</span>
@@ -149,7 +179,13 @@
     <label style="font-size:10px; color:var(--text-dim); display:flex; align-items:center; gap:4px;">
       NORM <input type="checkbox" id="norm-toggle" checked>
     </label>
-    <input type="range" id="yrange" min="10" max="60" step="5" value="30" style="width:70px">
+    <div class="param-container">
+      <button class="param-btn" id="yrange-btn" tabindex="0">Y: ±30dB</button>
+      <div class="slider-popover">
+        <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Y-range: <span id="yrange-val">±30 dB</span></div>
+        <input type="range" id="yrange" min="10" max="60" step="5" value="30" style="width:100%">
+      </div>
+    </div>
     <input type="text" id="curve-name" placeholder="Curve Name" style="width:110px;">
   </div>
 
