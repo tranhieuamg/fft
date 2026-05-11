@@ -3,10 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SORANIK RTA — Frequency Real-Time Analysis</title>
+<title>FreqScope — Frequency Response Analyzer</title>
 <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
- <style>
- @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600&display=swap');
+
   :root {
     --bg: #0a0c0f; --surface: #111418; --surface2: #181c22;
     --border: #222830; --accent: #00e5ff; --accent2: #ff6b35;
@@ -15,194 +16,425 @@
     --mono: 'Share Tech Mono', monospace; --sans: 'Barlow', sans-serif;
   }
   * { box-sizing:border-box; margin:0; padding:0; }
-  body { 
-    background:var(--bg); color:var(--text); font-family:var(--sans);
-    height: 100vh; display:flex; flex-direction:column; overflow: hidden; 
-  }
-  header { display:flex; align-items:center; justify-content:space-between; padding:8px 20px; border-bottom:1px solid var(--border); background:var(--surface); }
-  .logo-name { font-family:var(--mono); font-size:18px; color:var(--accent); letter-spacing:2px; }
+  body { background:var(--bg); color:var(--text); font-family:var(--sans);
+         font-weight:300; min-height:100vh; display:flex; flex-direction:column; }
 
-  /* New Toolbar System */
-  .toolbar { display: flex; align-items: center; gap: 12px; padding: 6px 16px; background: var(--surface2); border-bottom: 1px solid var(--border); z-index: 20; }
-  .toolbar.bottom { border-bottom: none; border-top: 1px solid var(--border); }
-  .toolbar-group { display: flex; align-items: center; gap: 8px; border-right: 1px solid var(--border); padding-right: 12px; height: 30px; }
-  .toolbar-label { font-family: var(--mono); font-size: 9px; color: var(--text-dim); text-transform: uppercase; white-space: nowrap; }
-
-  /* Sidebar remains for View Mode & Controls */
-  main { flex: 1; display: grid; grid-template-columns: 280px 1fr; overflow: hidden; }
-  .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:20px; display:flex; flex-direction:column; gap:20px; overflow-y:auto; }
-  .section-label { font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--text-dim); text-transform:uppercase; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
-  .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
-
-  /* Graph Stacking */
-  .content-area { display: flex; flex-direction: column; overflow-y: auto; background: var(--bg); position: relative; }
-  .chart-container { flex: 1; min-height: 350px; display: flex; flex-direction: column; position: relative; border-bottom: 1px solid var(--border); }
-  #plot, #ir-plot { flex: 1; width: 100%; }
-
-  /* Popover Slider Buttons */
-  .param-container { position: relative; display: inline-block; }
-  .param-btn {
-    background: var(--surface); border: 1px solid var(--border); color: var(--accent);
-    font-family: var(--mono); font-size: 11px; padding: 4px 10px; border-radius: 4px; cursor: pointer; min-width: 90px; text-align: left;
-  }
-  .slider-popover {
-    display: none; position: absolute; bottom: 100%; left: 0; background: var(--surface);
-    border: 1px solid var(--accent); padding: 12px; border-radius: 4px; width: 180px; box-shadow: 0 -4px 15px rgba(0,0,0,0.5); z-index: 100;
-  }
-  .toolbar .slider-popover { bottom: auto; top: 100%; } /* Top toolbar drops down, bottom toolbar pops up */
-  .param-container:focus-within .slider-popover { display: block; }
-
-  /* Standard Inputs */
-  select, input[type=text] { background:var(--surface); border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:11px; padding:4px 6px; border-radius:4px; outline:none; }
-  .btn-primary, .btn-secondary, .btn-danger { padding: 8px 12px; font-family: var(--mono); font-size: 11px; text-transform: uppercase; cursor: pointer; border-radius: 4px; border: 1px solid var(--border); background: transparent; color: var(--text); }
-  .btn-primary { border-color: var(--accent); color: var(--accent); }
-  .btn-danger { border-color: var(--red); color: var(--red); }
-  .status-bar { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:11px; color:var(--text-dim); }
-  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-dim); }
-  .status-dot.ready { background:var(--green); box-shadow:0 0 6px var(--green); }
-  .status-dot.recording { background:var(--red); animation:pulse 0.8s infinite; }
+  header { display:flex; align-items:center; justify-content:space-between;
+           padding:18px 32px; border-bottom:1px solid var(--border); background:var(--surface); }
+  .logo { display:flex; align-items:baseline; gap:10px; }
+  .logo-name { font-family:var(--mono); font-size:22px; color:var(--accent); letter-spacing:2px; }
+  .logo-tag  { font-size:11px; color:var(--text-dim); letter-spacing:3px; text-transform:uppercase; }
+  .status-bar { display:flex; align-items:center; gap:8px; font-family:var(--mono); font-size:12px; color:var(--text-dim); }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--text-dim); transition:background 0.3s; }
+  .status-dot.ready      { background:var(--green); box-shadow:0 0 6px var(--green); }
+  .status-dot.recording  { background:var(--red);   box-shadow:0 0 8px var(--red); animation:pulse 0.8s infinite; }
+  .status-dot.processing { background:var(--accent); box-shadow:0 0 6px var(--accent); }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
- </style>
+
+  main { display:grid; grid-template-columns:280px 1fr; flex:1; }
+
+  .sidebar { background:var(--surface); border-right:1px solid var(--border);
+             padding:24px 20px; display:flex; flex-direction:column; gap:24px; overflow-y:auto; }
+  .section-label { font-family:var(--mono); font-size:10px; letter-spacing:3px; color:var(--text-dim);
+                   text-transform:uppercase; margin-bottom:10px; display:flex; align-items:center; gap:8px; }
+  .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
+  .param-row { display:flex; flex-direction:column; gap:6px; margin-bottom:12px; }
+  .param-label { font-size:11px; color:var(--text-dim); letter-spacing:1px; text-transform:uppercase;
+                 display:flex; justify-content:space-between; align-items:center; }
+  .param-value { font-family:var(--mono); font-size:13px; color:var(--accent); }
+
+  input[type=range] { -webkit-appearance:none; width:100%; height:3px; background:var(--border);
+                      border-radius:2px; outline:none; cursor:pointer; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:14px; height:14px;
+    border-radius:50%; background:var(--accent); box-shadow:0 0 6px var(--accent); cursor:pointer; }
+  select { width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text);
+           font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px;
+           outline:none; cursor:pointer; appearance:none; text-overflow:ellipsis; }
+  select:focus { border-color:var(--accent); }
+
+  .btn-primary { width:100%; padding:13px; background:transparent; border:1px solid var(--accent);
+    color:var(--accent); font-family:var(--mono); font-size:13px; letter-spacing:2px;
+    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s;
+    position:relative; overflow:hidden; }
+  .btn-primary::before { content:''; position:absolute; inset:0; background:var(--accent); opacity:0; transition:opacity 0.2s; }
+  .btn-primary:hover::before { opacity:0.08; }
+  .btn-primary:active { transform:scale(0.98); }
+  .btn-primary:disabled { border-color:var(--border); color:var(--text-dim); cursor:not-allowed; }
+  .btn-primary:disabled::before { display:none; }
+  
+  .btn-analyze { border-color: var(--green); color: var(--green); }
+  .btn-analyze::before { background: var(--green); }
+
+  .btn-secondary { width:100%; padding:10px; background:transparent; border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:2px;
+    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s; }
+  .btn-secondary:hover { border-color:var(--accent2); color:var(--accent2); }
+  .btn-secondary:disabled { opacity:0.3; cursor:not-allowed; }
+
+  .btn-danger { width:100%; padding:10px; background:transparent; border:1px solid var(--border);
+    color:var(--text-dim); font-family:var(--mono); font-size:11px; letter-spacing:2px;
+    text-transform:uppercase; cursor:pointer; border-radius:4px; transition:all 0.2s; }
+  .btn-danger:hover { border-color:var(--red); color:var(--red); }
+
+  .chart-area { display:flex; flex-direction:column; padding:24px; gap:16px; overflow:hidden; position:relative; }
+  .chart-header { display:flex; align-items:center; justify-content:space-between; }
+  .chart-title { font-family:var(--mono); font-size:13px; color:var(--text-dim); letter-spacing:2px; text-transform:uppercase; }
+  .chart-meta { display:flex; gap:20px; font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+  .chart-meta span { color:var(--text); }
+  #plot { flex:1; min-height:420px; border:1px solid var(--border); border-radius:4px; background:var(--surface); }
+
+  .log-panel { background:var(--surface); border-top:1px solid var(--border); padding:10px 24px;
+               font-family:var(--mono); font-size:11px; color:var(--text-dim);
+               display:flex; align-items:center; gap:12px; min-height:38px; }
+  #log-text { color:var(--text); flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .progress-bar-wrap { width:180px; flex-shrink:0; height:3px; background:var(--border); border-radius:2px; overflow:hidden; }
+  .progress-bar { height:100%; width:0%; background:var(--accent); border-radius:2px;
+                  transition:width 0.15s linear; box-shadow:0 0 6px var(--accent); }
+
+  .toggle-row { display:flex; align-items:center; justify-content:space-between; font-size:12px; color:var(--text-dim); margin-bottom:10px; }
+  .toggle { position:relative; width:36px; height:20px; }
+  .toggle input { opacity:0; width:0; height:0; }
+  .slider-track { position:absolute; inset:0; background:var(--border); border-radius:20px; cursor:pointer; transition:background 0.2s; }
+  .toggle input:checked + .slider-track { background:var(--accent); }
+  .slider-track::before { content:''; position:absolute; width:14px; height:14px; left:3px; top:3px;
+                           background:white; border-radius:50%; transition:transform 0.2s; }
+  .toggle input:checked + .slider-track::before { transform:translateX(16px); }
+
+  .info-box { padding:10px 12px; background:var(--surface2); border-left:2px solid var(--accent);
+              font-size:11px; line-height:1.7; color:var(--text-dim); }
+  .watermark { position:absolute; bottom:60px; right:30px; font-family:var(--mono); font-size:10px;
+               color:var(--border); letter-spacing:2px; pointer-events:none; user-select:none; }
+  ::-webkit-scrollbar { width:4px; }
+  ::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px; }
+/* Mobile and Tablet Adaptation */
+  @media (max-width: 900px) {
+    main { 
+      display: flex; 
+      flex-direction: column; 
+    }
+    .sidebar { 
+      border-right: none; 
+      border-bottom: 1px solid var(--border); 
+      max-height: 45vh; /* Keeps controls scrollable on the top half of the screen */
+    }
+    header { 
+      padding: 12px 16px; 
+    }
+    .chart-area {
+      padding: 16px;
+    }
+    #plot { 
+      min-height: 400px; 
+    }
+    
+    /* Enlarges slider thumbs for easier touch interaction on Android */
+    input[type=range]::-webkit-slider-thumb {
+      width: 24px; 
+      height: 24px;
+    }
+  }
+  
+  .ov-row {
+  display: grid;
+  grid-template-columns: 36px 28px 110px 1fr 160px;
+  gap: 0;
+  align-items: center;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-family: var(--mono);
+  font-size: 11px;
+  min-height: 36px;
+  transition: border-color 0.15s;
+}
+.ov-row:hover { border-color: var(--accent); }
+.ov-cell { padding: 6px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ov-cell-name {
+  padding: 6px 8px; color: var(--text); cursor: pointer;
+  text-decoration: underline dotted; text-underline-offset: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.ov-cell-name:hover { color: var(--accent); }
+.ov-cell-color {
+  padding: 6px 8px; cursor: pointer; display: flex; align-items: center;
+}
+.ov-swatch {
+  width: 16px; height: 16px; border-radius: 3px; border: 2px solid var(--border);
+  cursor: pointer; transition: border-color 0.15s; flex-shrink: 0;
+}
+.ov-swatch:hover { border-color: white; }
+.ov-timestamp { padding: 6px 8px; color: var(--text-dim); font-size: 10px; }
+
+</style>
 </head>
 <body>
 
 <header>
-  <div class="logo"><span class="logo-name">SORANIK RTA</span></div>
+  <div class="logo">
+    <span class="logo-name">FreqScope</span>
+    <span class="logo-tag">v2.1 Unified Edition</span>
+  </div>
   <div class="status-bar">
     <div class="status-dot" id="status-dot"></div>
     <span id="status-text">IDLE</span>
   </div>
 </header>
 
-<div class="toolbar">
-  <div class="toolbar-group">
-    <span class="toolbar-label">Hardware</span>
-    <select id="input-device" style="max-width:130px;"><option value="">Mic</option></select>
-    <select id="output-device" style="max-width:130px;"><option value="">Output</option></select>
-    <button class="btn-secondary" id="btn-refresh-dev" style="padding:2px 8px;">&#8635;</button>
-  </div>
-
-  <!-- ADD this group to the top toolbar, after the Hardware group -->
-<div class="toolbar-group">
-  <span class="toolbar-label">Signal</span>
-  <select id="sweep-type">
-    <option value="logsweep">Log Sweep</option>
-    <option value="pinknoise">Pink Noise</option>
-  </select>
-  <div class="param-container">
-    <button class="param-btn" id="dur-btn" tabindex="0">Dur: 2.0s</button>
-    <div class="slider-popover">
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Duration: <span id="dur-val">2.0 s</span></div>
-      <input type="range" id="duration" min="1" max="8" step="0.5" value="2" style="width:100%">
-    </div>
-  </div>
-  <div class="param-container">
-    <button class="param-btn" id="vol-btn" tabindex="0">Vol: 80%</button>
-    <div class="slider-popover">
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Volume: <span id="vol-val">80%</span></div>
-      <input type="range" id="volume" min="10" max="100" step="5" value="80" style="width:100%">
-    </div>
-  </div>
-  <div class="param-container">
-    <button class="param-btn" id="freq-btn" tabindex="0">Range: 20-20k</button>
-    <div class="slider-popover">
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">Freq Low: <span id="flo-val">20 Hz</span></div>
-      <input type="range" id="freq-lo" min="10" max="200" step="10" value="20" style="width:100%;margin-bottom:8px;">
-      <div style="font-size:10px;color:var(--text-dim);margin-bottom:4px;">Freq High: <span id="fhi-val">20000 Hz</span></div>
-      <input type="range" id="freq-hi" min="5000" max="20000" step="1000" value="20000" style="width:100%">
-    </div>
-  </div>
-</div>
-</div>
-
 <main>
   <aside class="sidebar">
+
+    <div>
+      <div class="section-label">Hardware Devices</div>
+      <div class="param-row">
+        <div class="param-label">Input (Mic)</div>
+        <select id="input-device"><option value="">System Default</option></select>
+      </div>
+      <div class="param-row">
+        <div class="param-label">Output (Earphones)</div>
+        <select id="output-device"><option value="">System Default</option></select>
+      </div>
+      <button class="btn-secondary" id="btn-refresh-dev" style="margin-top:4px; padding:8px 10px; font-size:10px;">
+        &#8635; Refresh / Load Device Names
+      </button>
+    </div>
+
+    <div>
+      <div class="section-label">Signal</div>
+      <div class="param-row">
+        <div class="param-label">Sweep Type</div>
+        <select id="sweep-type">
+          <option value="logsweep">Log Swept-Sine (recommended)</option>
+          <option value="pinknoise">Pink Noise</option>
+        </select>
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>Duration</span><span class="param-value" id="dur-val">2.0 s</span></div>
+        <input type="range" id="duration" min="1" max="8" step="0.5" value="2">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>Output Volume</span><span class="param-value" id="vol-val">80%</span></div>
+        <input type="range" id="volume" min="10" max="100" step="5" value="80">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>Freq Low</span><span class="param-value" id="flo-val">20 Hz</span></div>
+        <input type="range" id="freq-lo" min="10" max="200" step="10" value="20">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>Freq High</span><span class="param-value" id="fhi-val">20000 Hz</span></div>
+        <input type="range" id="freq-hi" min="5000" max="20000" step="1000" value="20000">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">FR Processing</div>
+      <div class="param-row">
+        <div class="param-label">
+            <span>Smoothing</span>
+            <span style="font-size:9px;color:var(--text-dim);text-transform:none;">(Click Analyze)</span>
+        </div>
+        <select id="smooth-val">
+          <option value="3">1/3 Octave</option>
+          <option value="6">1/6 Octave</option>
+          <option value="12">1/12 Octave</option>
+		  <option value="6" selected>1/24 Octave</option>
+          <option value="0">None (Raw)</option>
+        </select>
+      </div>
+      <div class="toggle-row" style="margin-top:16px;">
+        <span>Normalize 0 dB peak</span>
+        <label class="toggle"><input type="checkbox" id="norm-toggle" checked><span class="slider-track"></span></label>
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>Y-axis range</span><span class="param-value" id="yrange-val">±30 dB</span></div>
+        <input type="range" id="yrange" min="10" max="60" step="5" value="30">
+      </div>
+      <div class="param-row">
+        <div class="param-label">Curve Name</div>
+        <input type="text" id="curve-name" value="Measurement 1" style="width:100%;background:var(--surface2);
+          border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;
+          padding:8px 10px;border-radius:4px;outline:none;">
+      </div>
+    </div>
+
+    <div>
+      <div class="section-label">IR Display Settings</div>
+      <div class="param-row">
+        <div class="param-label"><span>IR X-Range</span><span class="param-value" id="ir-xoffset-val">±10 ms</span></div>
+        <input type="range" id="ir-xoffset" min="1" max="100" step="1" value="10">
+      </div>
+      <div class="param-row">
+        <div class="param-label"><span>IR Y-Range</span><span class="param-value" id="ir-yrange-val">±100%</span></div>
+        <input type="range" id="ir-yrange" min="1" max="100" step="1" value="100">
+      </div>
+    </div>
+
     <div>
       <div class="section-label">View Mode</div>
-      <div style="display:flex; gap:4px;">
+      <div style="display:flex; gap:4px; margin-bottom: 24px;">
         <button class="btn-secondary" id="btn-view-fr" style="flex:1; border-color:var(--accent); color:var(--accent);">FR</button>
         <button class="btn-secondary" id="btn-view-ir" style="flex:1;">IR</button>
         <button class="btn-secondary" id="btn-view-both" style="flex:1;">BOTH</button>
       </div>
-    </div>
-
-    <div>
       <div class="section-label">Controls</div>
-      <div style="display:flex; flex-direction:column; gap:8px;">
+      <div style="display:flex;flex-direction:column;gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
-        <button class="btn-primary" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
-        <div style="display:flex; gap:4px;">
+        <button class="btn-primary btn-analyze" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
+        <div style="display:flex; gap:8px;">
           <button class="btn-secondary" id="btn-scale" disabled style="flex:1;">SCALE</button>
-          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUB</button>
+          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
         </div>
-        <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
-        <div style="display:flex; gap:4px;">
-          <button class="btn-secondary" onclick="savePng()" style="flex:1;">PNG</button>
+        <div style="display:flex; gap:8px;">
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
+          <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
         </div>
-        <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
-        <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
+		<button class="btn-secondary" id="btn-png">SAVE PNG</button>  <!-- ← add this -->
+        <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
+		<button class="btn-danger"    id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
 
-    <div class="info-box" id="info-box" style="margin-top:auto; font-size:10px;">
-      Ready. Click <strong style="color:var(--accent)">RECORD</strong> to begin.
+
+    <div class="info-box" id="info-box">
+      Click <strong style="color:var(--accent)">RECORD SIGNAL</strong> to begin.<br>
+      Microphone access required.<br>
+      Use headphones to avoid feedback.
     </div>
   </aside>
 
-  <div class="content-area" id="chart-area-container">
-    <div class="chart-container" id="fr-container"><div id="plot"></div></div>
-    <div class="chart-container" id="ir-container" style="display:none;"><div id="ir-plot"></div></div>
+  <div class="chart-area" id="chart-area-container" style="flex-direction: column; gap: 16px; overflow-y: auto;">
+    <div id="fr-container" style="flex:1; display:flex; flex-direction:column; position:relative; min-width:0; min-height:400px;">
+      <div class="chart-header">
+        <div class="chart-title">Frequency Response</div>
+        <div class="chart-meta">
+          SR: <span id="meta-sr">&#8212;</span> &nbsp;|&nbsp;
+          FFT: <span id="meta-fft">&#8212;</span> &nbsp;|&nbsp;
+          Points: <span id="meta-pts">&#8212;</span>
+        </div>
+      </div>
+      <div id="plot"></div>
+      <div class="watermark">FREQSCOPE v2.1</div>
+    </div>
+    
+    <div id="ir-container" style="display:none; flex:1; flex-direction:column; position:relative; min-width:0; min-height:400px;">
+      <div class="chart-header">
+        <div class="chart-title">Impulse Response</div>
+      </div>
+      <div id="ir-plot" style="flex:1; border:1px solid var(--border); border-radius:4px; background:var(--surface);"></div>
+    </div>
   </div>
 </main>
 
-<!-- ADD this between </main> and the bottom toolbar -->
-<div style="display:flex; align-items:center; gap:12px; padding:4px 16px;
-  background:var(--surface2); border-top:1px solid var(--border);
-  font-family:var(--mono); font-size:10px; color:var(--text-dim);">
-  <span id="log-text" style="flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Ready.</span>
-  <span>SR: <span id="meta-sr">—</span></span>
-  <span>FFT: <span id="meta-fft">—</span></span>
-  <span>Pts: <span id="meta-pts">—</span></span>
-  <div style="width:120px; height:3px; background:var(--border); border-radius:2px; overflow:hidden; flex-shrink:0;">
-    <div id="progress-bar" style="height:100%; width:0%; background:var(--accent); border-radius:2px; transition:width 0.15s linear;"></div>
+<div class="log-panel">
+  <span style="color:var(--accent);font-size:10px;flex-shrink:0;">LOG</span>
+  <span id="log-text">Ready. Select hardware, configure parameters, and click RECORD SIGNAL.</span>
+  <div class="progress-bar-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+</div>
+
+<div id="modal-overlay" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:100; align-items:center; justify-content:center; font-family:var(--sans);">
+  
+  <div id="modal-scale" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SCALE CURVE</div>
+    <div class="param-row">
+      <label class="param-label">Select Curve</label>
+      <select id="scale-curve-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <div class="param-label"><span>Offset (dB)</span><span class="param-value" id="scale-val-disp">0.0 dB</span></div>
+      <input type="range" id="scale-slider" min="-30" max="30" step="0.5" value="0">
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">DONE</button>
+    </div>
+  </div>
+
+  <div id="modal-sub" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:320px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">SUBTRACT CURVES</div>
+    <div class="param-row">
+      <label class="param-label">Curve A (Minuend)</label>
+      <select id="sub-a-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row">
+      <label class="param-label">Curve B (Subtrahend)</label>
+      <select id="sub-b-sel" style="background:var(--surface2);"></select>
+    </div>
+    <div class="param-row" style="margin-bottom:0;">
+      <label class="param-label">Result Name</label>
+      <input type="text" id="sub-name" value="A minus B" style="width:100%;background:var(--surface2);border:1px solid var(--border);color:var(--text);font-family:var(--mono);font-size:12px;padding:8px 10px;border-radius:4px;outline:none;">
+    </div>
+    <div style="text-align:center; font-size:11px; color:var(--text-dim); margin-top:-4px;">Result = A - B</div>
+    <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+      <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">CANCEL</button>
+      <button class="btn-primary" style="width:auto; padding:8px 16px;" onclick="doSubtract()">SUBTRACT</button>
+    </div>
+  </div>
+  
+  <div id="modal-overlays" style="display:none; background:var(--surface); border:1px solid var(--border);
+  padding:24px; border-radius:4px; width:780px; max-width:95vw; max-height:85vh;
+  flex-direction:column; gap:16px; overflow:hidden;">>
+
+  <div style="display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:2px;">
+      OVERLAYS &nbsp;<span id="overlays-count" style="color:var(--text-dim); font-size:11px;"></span>
+    </div>
+    <div style="display:flex; gap:8px;">
+      <button class="btn-secondary" id="btn-save-overlays"
+        style="width:auto; padding:8px 14px; font-size:10px;">SAVE FILE</button>
+      <label class="btn-secondary"
+        style="width:auto; padding:8px 14px; font-size:10px; cursor:pointer; margin:0;">
+        LOAD FILE
+        <input type="file" id="load-overlays-input" accept=".txt"
+          style="display:none;" onchange="loadOverlays(event)">
+      </label>
+      <button class="btn-secondary" onclick="closeModal()"
+        style="width:auto; padding:8px 14px; font-size:10px;">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- Table header -->
+  <div style="display:grid; grid-template-columns:36px 28px 110px 1fr 160px;
+    gap:0; font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    letter-spacing:2px; text-transform:uppercase; flex-shrink:0; padding:0 4px;">
+    <div id="col-vis" onclick="sortOverlays('vis')" title="Show / Hide all"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">👁</div>
+    <div id="col-color" onclick="sortOverlays('color')" title="Group by color"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">●</div>
+    <div style="padding:6px 4px; color:var(--border);">PHASE</div>
+    <div id="col-name" onclick="sortOverlays('name')" title="Sort by name"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">NAME ↕</div>
+    <div id="col-time" onclick="sortOverlays('time')" title="Sort by time"
+      style="cursor:pointer; user-select:none; padding:6px 4px;">TIMESTAMP ↕</div>
+  </div>
+
+  <!-- Scrollable rows -->
+  <div id="overlays-body"
+    style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:2px; padding:0 4px;">
+  </div>
+
+</div>
+  <div id="modal-edit" style="display:none; background:var(--surface); border:1px solid var(--border); padding:24px; border-radius:4px; width:340px; gap:16px; flex-direction:column;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; border-bottom:1px solid var(--border); padding-bottom:8px;">EDIT CURVE</div>
+  <div class="param-row">
+    <label class="param-label">Name</label>
+    <input type="text" id="edit-name-input" style="width:100%; background:var(--surface2); border:1px solid var(--border); color:var(--text); font-family:var(--mono); font-size:12px; padding:8px 10px; border-radius:4px; outline:none;">
+  </div>
+
+  <div class="param-row">
+    <div class="param-label">Color</div>
+    <div id="edit-color-grid" style="display:grid; grid-template-columns:repeat(10,1fr); gap:6px; margin-top:4px;"></div>
+  </div>
+
+  <div style="font-family:var(--mono); font-size:10px; color:var(--text-dim); letter-spacing:1px; margin-top:-4px;">
+    SAVED: <span id="edit-timestamp" style="color:var(--text);">—</span>
+  </div>
+
+  <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:8px;">
+    <button class="btn-secondary" style="width:auto; padding:8px 16px;" onclick="closeModal()">CANCEL</button>
+    <button class="btn-primary"   style="width:auto; padding:8px 16px;" onclick="commitEdit()">APPLY</button>
   </div>
 </div>
 
-<div class="toolbar bottom">
-  <div class="toolbar-group">
-    <span class="toolbar-label">FR Proc</span>
-    <select id="smooth-val">
-      <option value="3">1/3 Oct</option><option value="6" selected>1/6 Oct</option>
-      <option value="12">1/12 Oct</option><option value="24">1/24 Oct</option><option value="0">Raw</option>
-    </select>
-    <label style="font-size:10px; color:var(--text-dim); display:flex; align-items:center; gap:4px;">
-      NORM <input type="checkbox" id="norm-toggle" checked>
-    </label>
-    <div class="param-container">
-      <button class="param-btn" id="yrange-btn" tabindex="0">Y: ±30dB</button>
-      <div class="slider-popover">
-        <div style="font-size:10px;color:var(--text-dim);margin-bottom:6px;">Y-range: <span id="yrange-val">±30 dB</span></div>
-        <input type="range" id="yrange" min="10" max="60" step="5" value="30" style="width:100%">
-      </div>
-    </div>
-    <input type="text" id="curve-name" placeholder="Curve Name" style="width:110px;">
-  </div>
-
-  <div class="toolbar-group" style="border:none;">
-    <span class="toolbar-label">IR Settings</span>
-    <div class="param-container">
-      <button class="param-btn" id="ir-x-btn" tabindex="0">X: 0.0ms</button>
-      <div class="slider-popover"><input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0" style="width:100%"></div>
-    </div>
-    <div class="param-container">
-      <button class="param-btn" id="ir-y-btn" tabindex="0">Y: ±100%</button>
-      <div class="slider-popover"><input type="range" id="ir-yrange" min="1" max="100" step="1" value="100" style="width:100%"></div>
-    </div>
-  </div>
 </div>
-
-<div id="modal-overlay" ... > ```
 
 <script>
 const COLORS = [
@@ -320,29 +552,14 @@ updateDeviceLists();
 // ───────────────────────────────────────────────────────────────────
 //  UI Updaters
 // ───────────────────────────────────────────────────────────────────
-
-
-
 function updateDisplays() {
-  const dur = parseFloat(durSlider.value).toFixed(1);
-  const vol = volSlider.value;
-  const flo = floSlider.value;
-  const fhi = fhiSlider.value;
-  
-  // Update the new Toolbar Button text
-  if($('dur-btn')) $('dur-btn').textContent = `Dur: ${dur}s`;
-  if($('vol-btn')) $('vol-btn').textContent = `Vol: ${vol}%`;
-  if($('freq-btn')) $('freq-btn').textContent = `Range: ${flo}-${fhi >= 1000 ? (fhi/1000)+'k' : fhi}`;
-  
-  if($('ir-x-btn')) $('ir-x-btn').textContent = `X: ${parseFloat(irXSlider.value).toFixed(1)}ms`;
-  if($('ir-y-btn')) $('ir-y-btn').textContent = `Y: ±${irYSlider.value}%`;
-  
-  // Keep background labels updated
-  if($('dur-val')) $('dur-val').textContent = dur + ' s';
-  if($('vol-val')) $('vol-val').textContent = vol + '%';
-  if($('flo-val')) $('flo-val').textContent = flo + ' Hz';
-  if($('fhi-val')) $('fhi-val').textContent = fhi + ' Hz';
-  if($('yrange-val')) $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
+  $('dur-val').textContent    = parseFloat(durSlider.value).toFixed(1) + ' s';
+  $('vol-val').textContent    = volSlider.value + '%';
+  $('flo-val').textContent    = floSlider.value + ' Hz';
+  $('fhi-val').textContent    = fhiSlider.value + ' Hz';
+  $('yrange-val').textContent = '+/-' + ySlider.value + ' dB';
+  $('ir-xoffset-val').textContent = '±' + parseInt(irXSlider.value) + ' ms';
+  $('ir-yrange-val').textContent = '±' + irYSlider.value + '%';
 }
 
 [durSlider, volSlider, floSlider, fhiSlider, ySlider, irXSlider, irYSlider].forEach(s => s.addEventListener('input', updateDisplays));
@@ -727,8 +944,8 @@ function replot() {
   savedCurves.forEach(c => {
     if (c.visible === false) return; // Hooked to unified toggle visibility
     let db = c.rawDb.slice();
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       // ← normalize first
-    if (c.offset) db = db.map(v => v + c.offset);                // ← offset survives
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       
+    if (c.offset) db = db.map(v => v + c.offset);      
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
       line:{ color:c.color, width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
@@ -737,8 +954,8 @@ function replot() {
   if (latestFreqs) {
     const liveName = nameInput.value || 'Live';
     let db = latestDb.slice();
-    if (liveOffset) db = db.map(v => v + liveOffset);            // offset before normalize
-    if (useNorm) db = normalize(latestFreqs, db);                // normalize cancels it = correct
+    if (liveOffset) db = db.map(v => v + liveOffset);       
+    if (useNorm) db = normalize(latestFreqs, db);            
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
       line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
@@ -1026,7 +1243,7 @@ function renderOverlays() {
 
   body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
+    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">∅</span>' : '<span style="color:var(--border)">∅</span>');
     return `<div class="ov-row">
       <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
@@ -1040,7 +1257,7 @@ function renderOverlays() {
         ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
           style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
           color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
-          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
+          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">∅</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
         ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
       </div>
       <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
@@ -1097,7 +1314,7 @@ function saveOverlays() {
 
   const json      = JSON.stringify(payload, null, 2);
   const ts        = new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
-  const filename  = `soranikrta-${savedCurves.length}curves-${ts}.txt`;
+  const filename  = `freqscope-${savedCurves.length}curves-${ts}.txt`;
   const a         = document.createElement('a');
   a.href          = URL.createObjectURL(new Blob([json], { type:'text/plain' }));
   a.download      = filename;
@@ -1186,14 +1403,14 @@ function exportCSV() {
   const all = [];
   savedCurves.forEach(c => {
       let db = c.rawDb.slice();
-      if (useNorm && !c.isMath) db = normalize(c.freqs, db);           // normalize first
-      if (c.offset) db = db.map(v => v + c.offset);                    // offset after
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+      if (c.offset) db = db.map(v => v + c.offset);
       all.push({ name: c.name, freqs: c.freqs, db: db });
   });
   if (latestFreqs) {
       let db = latestDb.slice();
-      if (liveOffset) db = db.map(v => v + liveOffset);                // offset before normalize
-      if (useNorm) db = normalize(latestFreqs, db);                    // normalize cancels it = correct
+      if (liveOffset) db = db.map(v => v + liveOffset);
+      if (useNorm) db = normalize(latestFreqs, db);
       all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
   }
 
@@ -1213,7 +1430,7 @@ function exportCSV() {
   }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
-  a.download = 'soranikrta_export.csv';
+  a.download = 'freqscope_export.csv';
   a.click();
 }
 
@@ -1231,7 +1448,7 @@ function savePng() {
       format: 'png',
       width: 1600,
       height: 800,
-      filename: 'soranikrta-FR-' + timestamp
+      filename: 'freqscope-FR-' + timestamp
     });
   }
 
@@ -1242,12 +1459,13 @@ function savePng() {
         format: 'png',
         width: 1600,
         height: 800,
-        filename: 'soranikrta-IR-' + timestamp
+        filename: 'freqscope-IR-' + timestamp
       });
     }, irVisible && frVisible ? 600 : 0);
   }
 }
 
+$('btn-png').addEventListener('click', savePng);
 
 btnRecord.addEventListener('click', startRecording);
 btnAnalyze.addEventListener('click', runAnalysis);
@@ -1478,14 +1696,13 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout(yRange=100, xOffset=0) {
+function makeIrPlotLayout(yRange=100, xRange=10) {
   return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
     xaxis:{
       title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
-      // This creates a 20ms window that shifts based on your X-Offset slider
-      range: [-5 + xOffset, 15 + xOffset],  
+      range: [-xRange, xRange],   // ← symmetric window around 0ms (the IR peak)
       gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
     },
@@ -1495,7 +1712,10 @@ function makeIrPlotLayout(yRange=100, xOffset=0) {
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
       zeroline:true, zerolinecolor:'#5a6a7a', zerolinewidth:1
     },
-    showlegend: false, hovermode:'x unified'
+    legend:{ font:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' },
+      bgcolor:'#111418', bordercolor:'#222830', borderwidth:1, x:0.01, y:0.99 },
+    showlegend: false, hovermode:'x unified',
+    hoverlabel:{ bgcolor:'#181c22', bordercolor:'#222830', font:{ family:'Share Tech Mono', size:11, color:'#c8d4e0' } }
   };
 }
 
