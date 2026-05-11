@@ -819,6 +819,38 @@ function normalize(freqs, db) {
     return db.map(v => v - maxVal);
 }
 
+function replot() {
+  const yRange = parseInt(ySlider.value);
+  const useNorm   = normChk.checked;
+  const traces = [];
+
+  savedCurves.forEach(c => {
+    if (c.visible === false) return; // Hooked to unified toggle visibility
+    let db = c.rawDb.slice();
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       // ← normalize first
+    if (c.offset) db = db.map(v => v + c.offset);                // ← offset survives
+    traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
+      line:{ color:c.color, width:1.5 },
+      hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
+  });
+
+  if (latestFreqs) {
+    const liveName = nameInput.value || 'Live';
+    let db = latestDb.slice();
+    if (liveOffset) db = db.map(v => v + liveOffset);            // offset before normalize
+    if (useNorm) db = normalize(latestFreqs, db);                // normalize cancels it = correct
+    traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
+      line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
+      hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
+  }
+
+  Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
+  
+  const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
+  if(btnScale) btnScale.disabled = savedCurves.length < 1;
+  if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
+}
+
 function exportCSV() {
   const useNorm = normChk.checked;
   const all = [];
