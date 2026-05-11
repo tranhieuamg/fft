@@ -131,15 +131,23 @@
       <div style="display:flex; flex-direction:column; gap:8px;">
         <button class="btn-primary" id="btn-record">&#9679; RECORD SIGNAL</button>
         <button class="btn-primary" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
+        
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" id="btn-scale" disabled style="flex:1;">SCALE</button>
           <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
         </div>
+        
         <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
+        
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
-        <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
-        <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
+          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE CURVE</button>
+        </div>
+
+        <div style="display:flex; gap:4px;">
+          <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
+          <button class="btn-danger" id="btn-clear" style="flex:1;">CLEAR ALL</button>
+        </div>
       </div>
     </div>
 
