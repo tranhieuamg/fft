@@ -1145,6 +1145,12 @@ function renderOverlays() {
   // ── Render rows ──────────────────────────────────────────────────
   body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
+    const phaseBtn = c.rawIr
+      ? '<button onclick="togglePhase(' + i + '); renderOverlays();" title="Invert phase" style="background:none;border:1px solid ' + (c.phaseInverted ? 'var(--accent2)' : 'var(--border)') + ';color:' + (c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)') + ';border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>'
+      : '<span style="color:var(--border);font-size:10px;">n/a</span>';
+    const mathBadge = c.isMath
+      ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>'
+      : '';
     return `<div class="ov-row">
       <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
@@ -1155,11 +1161,7 @@ function renderOverlays() {
         <div class="ov-swatch" style="background:${c.color};" title="${c.color}"></div>
       </div>
       <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
-          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
-          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
-        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
+        ${phaseBtn}${mathBadge}
       </div>
       <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
       <div class="ov-timestamp">${c.savedAt || '—'}</div>
