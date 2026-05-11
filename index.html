@@ -235,8 +235,8 @@
   <div class="toolbar-group" style="border:none;">
     <span class="toolbar-label">IR Settings</span>
     <div class="param-container">
-      <button class="param-btn" id="ir-x-btn" tabindex="0">X: 0.0ms</button>
-      <div class="slider-popover"><input type="range" id="ir-xoffset" min="-100" max="100" step="0.1" value="0" style="width:100%"></div>
+      <button class="param-btn" id="ir-x-btn" tabindex="0">X: ±10.0ms</button>
+      <div class="slider-popover"><input type="range" id="ir-xoffset" min="1" max="50" step="1" value="10" style="width:100%"></div>
     </div>
     <div class="param-container">
       <button class="param-btn" id="ir-y-btn" tabindex="0">Y: ±100%</button>
@@ -477,7 +477,7 @@ function updateDisplays() {
   if($('vol-btn')) $('vol-btn').textContent = `Vol: ${vol}%`;
   if($('freq-btn')) $('freq-btn').textContent = `Range: ${flo}-${fhi >= 1000 ? (fhi/1000)+'k' : fhi}`;
   
-  if($('ir-x-btn')) $('ir-x-btn').textContent = `X: ${parseFloat(irXSlider.value).toFixed(1)}ms`;
+  if($('ir-x-btn')) $('ir-x-btn').textContent = `X: ±${parseFloat(irXSlider.value).toFixed(1)}ms`;
   if($('ir-y-btn')) $('ir-y-btn').textContent = `Y: ±${irYSlider.value}%`;
   
   // Keep background labels updated
@@ -1764,14 +1764,14 @@ function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
 }
 
-function makeIrPlotLayout(yRange=100, xOffset=0) {
+function makeIrPlotLayout(yRange=100, xRange=10) {
   return {
     paper_bgcolor:'#111418', plot_bgcolor:'#0d1015',
     margin:{ l:60, r:20, t:20, b:50 },
     xaxis:{
       title:{ text:'Time (ms)', font:{ family:'Share Tech Mono', size:11, color:'#5a6a7a' } },
-      // This creates a 20ms window that shifts based on your X-Offset slider
-      range: [-5 + xOffset, 15 + xOffset],  
+      // This centers the peak at 0 and spreads outward symmetrically
+      range: [-xRange, xRange],  
       gridcolor:'#1a2030', gridwidth:1, tickcolor:'#2a3444', linecolor:'#2a3444',
       tickfont:{ family:'Share Tech Mono', size:10, color:'#5a6a7a' }, zeroline:false
     },
