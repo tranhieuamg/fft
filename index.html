@@ -138,7 +138,7 @@
         <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
-          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE CSV</button>
+          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE OVERLAY</button>
         </div>
         <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
         <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
@@ -1590,38 +1590,60 @@ function commitEdit() {
 function doSubtract() {
   const valA = $('sub-a-sel').value;
   const valB = $('sub-b-sel').value;
-  if (valA === valB) return alert('Cannot subtract a curve from itself.');
+  
+  if (valA === valB) {
+    alert('Cannot subtract a curve from itself.');
+    return;
+  }
 
   const useNorm = normChk.checked;
   
   function getScreenDb(val) {
-      if (val === 'live') {
-          let db = latestDb.slice();
-          if (liveOffset) db = db.map(v => v + liveOffset); // live: offset then normalize
-          if (useNorm) db = normalize(latestFreqs, db);      // (liveOffset has no effect with normalize ON — intentional)
-          return { freqs: latestFreqs, db };
-      } else {
-          const c = savedCurves[parseInt(val)];
-          let db = c.rawDb.slice();
-          if (useNorm && !c.isMath) db = normalize(c.freqs, db); // normalize first
-          if (c.offset) db = db.map(v => v + c.offset);          // offset after
-          return { freqs: c.freqs, db };
-      }
+    if (val === 'live') {
+      let db = Array.from(latestDb); // Ensure it's a standard array
+      if (liveOffset) db = db.map(v => v + liveOffset);
+      if (useNorm) db = normalize(latestFreqs, db);
+      return { freqs: latestFreqs, db };
+    } else {
+      const c = savedCurves[parseInt(val)];
+      let db = Array.from(c.rawDb); // Use Array.from to prevent reference issues
+      if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+      if (c.offset) db = db.map(v => v + c.offset);
+      return { freqs: c.freqs, db };
+    }
   }
 
-  const cA = getScreenDb(valA);
-  const cB = getScreenDb(valB);
-  
-  const interDb = interpolateDb(cA.freqs, cB.freqs, cB.db);
-  const newDb = cA.db.map((val, i) => val - interDb[i]);
-  
-  const color = COLORS[colorIdx++ % COLORS.length];
-  savedCurves.push({ name: $('sub-name').value, freqs: cA.freqs, rawDb: newDb, offset: 0, color: color, isMath: true, visible: true });
-  
-  renderSavedList();
-  replot();
-  closeModal();
-  setStatus('ready', '"' + $('sub-name').value + '" created.');
+  try {
+    const cA = getScreenDb(valA);
+    const cB = getScreenDb(valB);
+    
+    // Interpolate B onto A's frequency points
+    const interDb = interpolateDb(cA.freqs, cB.freqs, cB.db);
+    const newDb = cA.db.map((val, i) => val - interDb[i]);
+    
+    const color = COLORS[colorIdx++ % COLORS.length];
+    
+    // Add the new math curve
+    savedCurves.push({ 
+      name: $('sub-name').value, 
+      freqs: cA.freqs, 
+      rawDb: newDb, 
+      offset: 0, 
+      color: color, 
+      isMath: true, 
+      visible: true,
+      savedAt: new Date().toLocaleTimeString() 
+    });
+    
+    // UI Refresh
+    closeModal(); // This is the critical fix for the "unresponsive" issue
+    renderSavedList();
+    replot();
+    setStatus('ready', '"' + $('sub-name').value + '" created.');
+  } catch (err) {
+    console.error(err);
+    alert("Subtraction failed: " + err.message);
+  }
 }
 
 // ───────────────────────────────────────────────────────────────────
