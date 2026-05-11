@@ -1114,32 +1114,58 @@ function renderOverlays() {
   const body = $('overlays-body');
   $('overlays-count').textContent = savedCurves.length + ' curve' + (savedCurves.length !== 1 ? 's' : '');
 
+  // ── Empty state ──────────────────────────────────────────────────
   if (!savedCurves.length) {
-    body.innerHTML = indices.map(i => {
+    body.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:24px 0;">No saved curves</div>';
+    return;
+  }
+
+  // ── Build sorted index array ─────────────────────────────────────
+  // Sort indices, not the array itself, so savedCurves indices stay
+  // stable for onclick handlers.
+  const indices = savedCurves.map((_, i) => i);
+  indices.sort((a, b) => {
+    const ca = savedCurves[a], cb = savedCurves[b];
+    let va, vb;
+    if (overlaysSortKey === 'name') {
+      va = ca.name.toLowerCase(); vb = cb.name.toLowerCase();
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'color') {
+      va = ca.color; vb = cb.color;
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    if (overlaysSortKey === 'time') {
+      va = ca.savedAt || ''; vb = cb.savedAt || '';
+      return overlaysSortDir * va.localeCompare(vb);
+    }
+    return 0; // 'vis' — no sort, just toggle all
+  });
+
+  // ── Render rows ──────────────────────────────────────────────────
+  body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    return `<div class="ov-row" style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px; align-items:center; border-bottom:1px solid var(--border); padding:6px 0; gap:8px;">
-      <div class="ov-cell" style="display:flex; justify-content:center;">
+    return `<div class="ov-row">
+      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
           onchange="toggleCurve(${i}, this.checked)"
-          style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
+          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
       </div>
-      <div class="ov-cell" onclick="openEditModal(${i})" style="display:flex; justify-content:center; cursor:pointer;">
-        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,0.2);"></div>
+      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color">
+        <div class="ov-swatch" style="background:${c.color};" title="${c.color}"></div>
       </div>
-      <div class="ov-cell" style="display:flex; align-items:center; gap:4px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" 
-          style="background:${c.phaseInverted ? 'var(--accent2)' : 'transparent'}; 
-          border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--bg)' : 'var(--text-dim)'};
-          border-radius:2px; padding:2px 4px; cursor:pointer; font-family:var(--mono); font-size:10px;">INV</button>` : ''}
-        ${c.isMath ? `<span style="color:var(--text-dim); font-size:9px; border:1px solid var(--border); padding:1px 3px; border-radius:2px;">MATH</span>` : ''}
+      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
+        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
+          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
+          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
+          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
+        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
       </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:12px; padding-left:4px;">${c.name}</div>
-      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim); text-align:right; padding-right:10px;">${c.savedAt || '—'}</div>
+      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
+      <div class="ov-timestamp">${c.savedAt || '—'}</div>
     </div>`;
   }).join('');
-  return;
-  }
+}
 
   // Build sorted index array — we sort indices, not the array itself,
   // so savedCurves indices remain stable for onclick handlers.
