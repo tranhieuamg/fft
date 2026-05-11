@@ -177,7 +177,13 @@
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE OVERLAY</button>
         </div>
-        <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
+        <div style="display:flex; gap:4px;">
+          <button class="btn-secondary" id="btn-export" disabled style="flex:1;">EXPORT CSV</button>
+          <label class="btn-secondary" style="flex:1; text-align:center; cursor:pointer; margin:0;" title="Load previously exported CSV curves">
+		  IMPORT CSV
+            <input type="file" accept=".csv" style="display:none;" onchange="importCSV(event)">
+          </label>
+        </div>
         <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
       </div>
     </div>
@@ -1380,6 +1386,82 @@ function exportCSV() {
   a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
   a.download = filename; // Uses the new dynamic filename
   a.click();
+}
+
+function importCSV(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  
+  reader.onload = e => {
+    try {
+      const text = e.target.result;
+      const lines = text.trim().split('\n');
+      if (lines.length < 2) throw new Error("File is empty or format is invalid.");
+
+      // Parse headers to get curve names (ignoring the first 'Frequency' column)
+      const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
+      const numCurves = headers.length - 1;
+      if (numCurves < 1) throw new Error("No curve data found in this CSV.");
+
+      // Initialize data containers
+      const curveData = [];
+      for (let i = 0; i < numCurves; i++) {
+        curveData.push({ name: headers[i+1] || ('Imported ' + (i+1)), freqs: [], rawDb: [] });
+      }
+
+      // Extract float data row by row
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const cols = lines[i].split(',');
+        const f = parseFloat(cols[0]);
+        if (isNaN(f)) continue;
+
+        for (let c = 0; c < numCurves; c++) {
+          const val = parseFloat(cols[c+1]);
+          if (!isNaN(val)) {
+            curveData[c].freqs.push(f);
+            curveData[c].rawDb.push(val);
+          }
+        }
+      }
+
+      // Convert to strict Typed Arrays and push to the global state
+      let loaded = 0;
+      curveData.forEach(cd => {
+        if (cd.freqs.length > 0) {
+          savedCurves.push({
+            name: cd.name,
+            freqs: new Float32Array(cd.freqs),
+            rawDb: new Float32Array(cd.rawDb),
+            color: COLORS[colorIdx++ % COLORS.length],
+            offset: 0,
+            visible: true,
+            isMath: false,
+            rawIr: null, // CSV only contains frequency data, no IR phase
+            peakIdx: null,
+            savedAt: new Date().toLocaleDateString() + ' ' + new Date().toLocaleTimeString()
+          });
+          loaded++;
+        }
+      });
+
+      // Refresh the UI
+      renderSavedList();
+      replot();
+      setStatus('ready', `Imported ${loaded} curves from CSV.`);
+      
+    } catch (err) {
+      console.error(err);
+      setStatus('', 'Import failed: ' + err.message);
+      alert('Import failed: ' + err.message);
+    }
+    
+    // Clear the input value so the same file can be re-imported later if needed
+    event.target.value = ''; 
+  };
+  
+  reader.readAsText(file);
 }
 
 function savePng() {
