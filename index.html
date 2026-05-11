@@ -1143,56 +1143,8 @@ function renderOverlays() {
   });
 
   // ── Render rows ──────────────────────────────────────────────────
-body.innerHTML = indices.map(i => {
-    const c = savedCurves[i];
-    const phaseBtn = c.rawIr
-      ? '<button onclick="togglePhase(' + i + '); renderOverlays();" title="Invert phase" style="background:none;border:1px solid ' + (c.phaseInverted ? 'var(--accent2)' : 'var(--border)') + ';color:' + (c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)') + ';border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>'
-      : '<span style="color:var(--border);font-size:10px;">n/a</span>';
-    const mathBadge = c.isMath
-      ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>'
-      : '';
-    return `<div class="ov-row">
-      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
-        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
-          onchange="toggleCurve(${i}, this.checked)"
-          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
-      </div>
-      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color">
-        <div class="ov-swatch" style="background:${c.color};" title="${c.color}"></div>
-      </div>
-      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
-        ${phaseBtn}${mathBadge}
-      </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name">${c.name}</div>
-      <div class="ov-timestamp">${c.savedAt || '—'}</div>
-    </div>`;
-  }).join('');
-}
-
-  // Build sorted index array — we sort indices, not the array itself,
-  // so savedCurves indices remain stable for onclick handlers.
-  const indices = savedCurves.map((_, i) => i);
-  indices.sort((a, b) => {
-    const ca = savedCurves[a], cb = savedCurves[b];
-    let va, vb;
-    if (overlaysSortKey === 'name') {
-      va = ca.name.toLowerCase(); vb = cb.name.toLowerCase();
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    if (overlaysSortKey === 'color') {
-      va = ca.color; vb = cb.color;
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    if (overlaysSortKey === 'time') {
-      va = ca.savedAt || ''; vb = cb.savedAt || '';
-      return overlaysSortDir * va.localeCompare(vb);
-    }
-    return 0; // 'vis' — no sort, just toggle all
-  });
-
   body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
     return `<div class="ov-row">
       <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
@@ -1214,6 +1166,7 @@ body.innerHTML = indices.map(i => {
     </div>`;
   }).join('');
 }
+
 
 function sortOverlays(key) {
   if (key === 'vis') {
