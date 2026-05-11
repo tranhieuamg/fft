@@ -17,7 +17,7 @@
   * { box-sizing:border-box; margin:0; padding:0; }
   body { 
     background:var(--bg); color:var(--text); font-family:var(--sans);
-    height: 100vh; display:flex; flex-direction:column; overflow: hidden; 
+    height: 100vh; display:flex; flex-direction:column; overflow-y: auto; 
   }
   header { display:flex; align-items:center; justify-content:space-between; padding:8px 20px; border-bottom:1px solid var(--border); background:var(--surface); }
   .logo-name { font-family:var(--mono); font-size:18px; color:var(--accent); letter-spacing:2px; }
@@ -29,13 +29,13 @@
   .toolbar-label { font-family: var(--mono); font-size: 9px; color: var(--text-dim); text-transform: uppercase; white-space: nowrap; }
 
   /* Sidebar remains for View Mode & Controls */
-  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px 1fr; overflow: hidden; }
+  main { flex: 1; min-height: 0; display: grid; grid-template-columns: 280px 1fr; }
   .sidebar { background:var(--surface); border-right:1px solid var(--border); padding:20px; display:flex; flex-direction:column; gap:20px; overflow-y:auto; min-height: 0; }
   .section-label { font-family:var(--mono); font-size:10px; letter-spacing:2px; color:var(--text-dim); text-transform:uppercase; margin-bottom:8px; display:flex; align-items:center; gap:8px; }
   .section-label::after { content:''; flex:1; height:1px; background:var(--border); }
 
   /* Graph Stacking */
-  .content-area { display: flex; flex-direction: column; overflow-y: auto; background: var(--bg); position: relative; overflow-y: auto; min-height: 0; }
+  .content-area { display: flex; flex-direction: column; overflow-y: auto; background: var(--bg); position: relative; min-height: 0; }
   .chart-container { flex: 1; min-height: 350px; display: flex; flex-direction: column; position: relative; border-bottom: 1px solid var(--border); }
   #plot, #ir-plot { flex: 1; width: 100%; }
 
@@ -242,7 +242,7 @@
   
   <div id="modal-overlays" style="display:none; background:var(--surface); border:1px solid var(--border);
   padding:24px; border-radius:4px; width:780px; max-width:95vw; max-height:85vh;
-  flex-direction:column; gap:16px; overflow:hidden;">>
+  flex-direction:column; gap:16px; overflow:hidden;">
 
   <div style="display:flex; align-items:center; justify-content:space-between;
     border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
@@ -1068,7 +1068,23 @@ function saveCurve() {
   if (!latestFreqs) return;
   const color = COLORS[colorIdx++ % COLORS.length];
   const name  = nameInput.value || ('Curve ' + (savedCurves.length + 1));
-  savedCurves.push({ name, freqs:latestFreqs, rawDb:latestDb, rawIr:latestIr, peakIdx:latestPeakIdx, color, offset: liveOffset, visible: true });
+  
+  // Generate a readable timestamp
+  const now = new Date();
+  const timeString = now.toLocaleDateString() + ' ' + now.toLocaleTimeString();
+
+  savedCurves.push({ 
+    name, 
+    freqs: latestFreqs, 
+    rawDb: latestDb, 
+    rawIr: latestIr, 
+    peakIdx: latestPeakIdx, 
+    color, 
+    offset: liveOffset, 
+    visible: true,
+    savedAt: timeString  // Saves the time for the overlays table
+  });
+  
   latestFreqs = latestDb = latestIr = latestPeakIdx = null;
   liveOffset = 0;
   btnSave.disabled = true; btnExport.disabled = true;
@@ -1103,8 +1119,32 @@ function renderOverlays() {
   $('overlays-count').textContent = savedCurves.length + ' curve' + (savedCurves.length !== 1 ? 's' : '');
 
   if (!savedCurves.length) {
-    body.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:24px 0;">No saved curves</div>';
-    return;
+    body.innerHTML = indices.map(i => {
+    const c = savedCurves[i];
+    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
+    
+    // Apply the exact same grid-template-columns as the header
+    return `<div class="ov-row" style="display:grid; grid-template-columns:36px 28px 110px 1fr 160px; align-items:center; border-bottom:1px solid var(--border); padding:8px 4px; gap:0;">
+      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
+        <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
+          onchange="toggleCurve(${i}, this.checked)"
+          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
+      </div>
+      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color" style="cursor:pointer; display:flex; justify-content:center;">
+        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%;" title="${c.color}"></div>
+      </div>
+      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
+        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
+          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
+          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
+          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
+        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
+      </div>
+      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text);">${c.name}</div>
+      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim);">${c.savedAt || '—'}</div>
+    </div>`;
+  }).join('');
+  return;
   }
 
   // Build sorted index array — we sort indices, not the array itself,
