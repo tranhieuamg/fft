@@ -1399,15 +1399,27 @@ function importCSV(event) {
       const lines = text.trim().split('\n');
       if (lines.length < 2) throw new Error("File is empty or format is invalid.");
 
-      // Parse headers to get curve names (ignoring the first 'Frequency' column)
+      // Parse headers
       const headers = lines[0].split(',').map(h => h.replace(/^"|"$/g, '').trim());
       const numCurves = headers.length - 1;
       if (numCurves < 1) throw new Error("No curve data found in this CSV.");
 
+      // Detect ARTA specific format
+      const isARTA = headers[0].includes('Frequency') && headers[1] && headers[1].includes('Magnitude');
+
       // Initialize data containers
       const curveData = [];
       for (let i = 0; i < numCurves; i++) {
-        curveData.push({ name: headers[i+1] || ('Imported ' + (i+1)), freqs: [], rawDb: [] });
+        let curveName = headers[i+1];
+        
+        // If it's an ARTA file, use the filename (without extension) instead of "Magnitude(dB)"
+        if (isARTA && i === 0) {
+            curveName = file.name.replace(/\.[^/.]+$/, "");
+        } else if (!curveName) {
+            curveName = 'Imported ' + (i+1);
+        }
+        
+        curveData.push({ name: curveName, freqs: [], rawDb: [] });
       }
 
       // Extract float data row by row
@@ -1449,7 +1461,7 @@ function importCSV(event) {
       // Refresh the UI
       renderSavedList();
       replot();
-      setStatus('ready', `Imported ${loaded} curves from CSV.`);
+      setStatus('ready', `Imported ${loaded} curve(s) from CSV.`);
       
     } catch (err) {
       console.error(err);
