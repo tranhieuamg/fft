@@ -133,13 +133,11 @@
         <button class="btn-primary" id="btn-analyze" disabled>&#9654; ANALYZE DATA</button>
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" id="btn-scale" disabled style="flex:1;">SCALE</button>
-          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUB</button>
+          <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
         </div>
         <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
         <div style="display:flex; gap:4px;">
-          <button class="btn-secondary" onclick="savePng()" style="flex:1;">PNG</button>
-          <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE</button>
-        </div>
+          <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
         <button class="btn-secondary" id="btn-export" disabled>EXPORT CSV</button>
         <button class="btn-danger" id="btn-clear">CLEAR ALL</button>
       </div>
@@ -264,18 +262,14 @@
   </div>
 
   <!-- Table header -->
-  <div style="display:grid; grid-template-columns:36px 28px 110px 1fr 160px;
-    gap:0; font-family:var(--mono); font-size:10px; color:var(--text-dim);
-    letter-spacing:2px; text-transform:uppercase; flex-shrink:0; padding:0 4px;">
-    <div id="col-vis" onclick="sortOverlays('vis')" title="Show / Hide all"
-      style="cursor:pointer; user-select:none; padding:6px 4px;">👁</div>
-    <div id="col-color" onclick="sortOverlays('color')" title="Group by color"
-      style="cursor:pointer; user-select:none; padding:6px 4px;">●</div>
-    <div style="padding:6px 4px; color:var(--border);">PHASE</div>
-    <div id="col-name" onclick="sortOverlays('name')" title="Sort by name"
-      style="cursor:pointer; user-select:none; padding:6px 4px;">NAME ↕</div>
-    <div id="col-time" onclick="sortOverlays('time')" title="Sort by time"
-      style="cursor:pointer; user-select:none; padding:6px 4px;">TIMESTAMP ↕</div>
+  <div style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px;
+    gap:8px; font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    letter-spacing:1px; text-transform:uppercase; flex-shrink:0; padding:10px 0; border-bottom:2px solid var(--border);">
+    <div id="col-vis" onclick="sortOverlays('vis')" style="cursor:pointer; text-align:center;">Show</div>
+    <div id="col-color" onclick="sortOverlays('color')" style="cursor:pointer; text-align:center;">Color</div>
+    <div style="text-align:left;">Phase</div>
+    <div id="col-name" onclick="sortOverlays('name')" style="cursor:pointer; text-align:left;">Name ↕</div>
+    <div id="col-time" onclick="sortOverlays('time')" style="cursor:pointer; text-align:right; padding-right:10px;">Timestamp ↕</div>
   </div>
 
   <!-- Scrollable rows -->
@@ -823,38 +817,55 @@ function normalize(freqs, db) {
     return db.map(v => v - maxVal);
 }
 
-function replot() {
-  const yRange = parseInt(ySlider.value);
-  const useNorm   = normChk.checked;
-  const traces = [];
-
+function exportCSV() {
+  const useNorm = normChk.checked;
+  const all = [];
+  
   savedCurves.forEach(c => {
-    if (c.visible === false) return; // Hooked to unified toggle visibility
-    let db = c.rawDb.slice();
-    if (useNorm && !c.isMath) db = normalize(c.freqs, db);       // ← normalize first
-    if (c.offset) db = db.map(v => v + c.offset);                // ← offset survives
-    traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
-      line:{ color:c.color, width:1.5 },
-      hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
+    let db = Array.from(c.rawDb);
+    // 1. Align Offset
+    if (c.alignOffset) db = db.map(v => v + c.alignOffset);
+    // 2. Normalize (using spectral peak logic)
+    if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+    // 3. Display Offset
+    if (c.displayOffset) db = db.map(v => v + c.displayOffset);
+    
+    all.push({ name: c.name, freqs: c.freqs, db: db });
   });
 
   if (latestFreqs) {
-    const liveName = nameInput.value || 'Live';
-    let db = latestDb.slice();
-    if (liveOffset) db = db.map(v => v + liveOffset);            // offset before normalize
-    if (useNorm) db = normalize(latestFreqs, db);                // normalize cancels it = correct
-    traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
-      line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
-      hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
+    let db = Array.from(latestDb);
+    if (liveAlignOffset) db = db.map(v => v + liveAlignOffset);
+    if (useNorm) db = normalize(latestFreqs, db);
+    if (liveDisplayOffset) db = db.map(v => v + liveDisplayOffset);
+    
+    all.push({ name: nameInput.value || 'Live', freqs: latestFreqs, db: db });
   }
 
-  Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
+  if (!all.length) return;
   
-  const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
-  if(btnScale) btnScale.disabled = savedCurves.length < 1;
-  if(btnSubtract) btnSubtract.disabled = totalCurves < 2;
+  let csv = 'Frequency (Hz),' + all.map(c => '"' + c.name + '"').join(',') + '\n';
+  const ref = all[0];
+  for (let i = 0; i < ref.freqs.length; i++) {
+    const row = [ref.freqs[i].toFixed(2)];
+    for (const c of all) {
+      if (c === ref) {
+        row.push(c.db[i].toFixed(3));
+      } else {
+        const val = interpolateDb([ref.freqs[i]], c.freqs, c.db)[0];
+        row.push(val.toFixed(3));
+      }
+    }
+    csv += row.join(',') + '\n';
+  }
+  
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `soranikrta_export_${new Date().getTime()}.csv`;
+  a.click();
 }
-
 // ───────────────────────────────────────────────────────────────────
 //  STEP 1: RECORDING
 // ───────────────────────────────────────────────────────────────────
@@ -1121,27 +1132,25 @@ function renderOverlays() {
   if (!savedCurves.length) {
     body.innerHTML = indices.map(i => {
     const c = savedCurves[i];
-    const phaseLabel = (c.phaseInverted ? '<span style="color:var(--accent2)">Inv</span>' : '<span style="color:var(--border)">Inv</span>');
-    
-    // Apply the exact same grid-template-columns as the header
-    return `<div class="ov-row" style="display:grid; grid-template-columns:36px 28px 110px 1fr 160px; align-items:center; border-bottom:1px solid var(--border); padding:8px 4px; gap:0;">
-      <div class="ov-cell" style="display:flex;align-items:center;justify-content:center;">
+    return `<div class="ov-row" style="display:grid; grid-template-columns:40px 40px 100px 1fr 180px; align-items:center; border-bottom:1px solid var(--border); padding:6px 0; gap:8px;">
+      <div class="ov-cell" style="display:flex; justify-content:center;">
         <input type="checkbox" ${c.visible !== false ? 'checked' : ''}
           onchange="toggleCurve(${i}, this.checked)"
-          style="width:14px;height:14px;cursor:pointer;accent-color:var(--accent);">
+          style="width:16px; height:16px; cursor:pointer; accent-color:var(--accent);">
       </div>
-      <div class="ov-cell-color" onclick="openEditModal(${i})" title="Click to change color" style="cursor:pointer; display:flex; justify-content:center;">
-        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%;" title="${c.color}"></div>
+      <div class="ov-cell" onclick="openEditModal(${i})" style="display:flex; justify-content:center; cursor:pointer;">
+        <div class="ov-swatch" style="background:${c.color}; width:12px; height:12px; border-radius:50%; border:1px solid rgba(255,255,255,0.2);"></div>
       </div>
-      <div class="ov-cell" style="display:flex;align-items:center;gap:6px;">
-        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" title="Invert phase"
-          style="background:none;border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
-          color:${c.phaseInverted ? 'var(--accent2)' : 'var(--text-dim)'};
-          border-radius:2px;padding:1px 6px;cursor:pointer;font-family:var(--mono);font-size:11px;">Inv</button>` : '<span style="color:var(--border);font-size:10px;">n/a</span>'}
-        ${c.isMath ? '<span style="color:var(--text-dim);font-size:9px;letter-spacing:1px;">MATH</span>' : ''}
+      <div class="ov-cell" style="display:flex; align-items:center; gap:4px;">
+        ${c.rawIr ? `<button onclick="togglePhase(${i}); renderOverlays();" 
+          style="background:${c.phaseInverted ? 'var(--accent2)' : 'transparent'}; 
+          border:1px solid ${c.phaseInverted ? 'var(--accent2)' : 'var(--border)'};
+          color:${c.phaseInverted ? 'var(--bg)' : 'var(--text-dim)'};
+          border-radius:2px; padding:2px 4px; cursor:pointer; font-family:var(--mono); font-size:10px;">INV</button>` : ''}
+        ${c.isMath ? `<span style="color:var(--text-dim); font-size:9px; border:1px solid var(--border); padding:1px 3px; border-radius:2px;">MATH</span>` : ''}
       </div>
-      <div class="ov-cell-name" onclick="openEditModal(${i})" title="Click to edit name" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text);">${c.name}</div>
-      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim);">${c.savedAt || '—'}</div>
+      <div class="ov-cell-name" onclick="openEditModal(${i})" style="cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--text); font-size:12px; padding-left:4px;">${c.name}</div>
+      <div class="ov-timestamp" style="font-family:var(--mono); font-size:11px; color:var(--text-dim); text-align:right; padding-right:10px;">${c.savedAt || '—'}</div>
     </div>`;
   }).join('');
   return;
