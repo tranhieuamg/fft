@@ -766,59 +766,70 @@ function generatePinkNoise(sr, dur) {
   return buf;
 }
 
-function recordAudio(stream, durationSecs, targetSR) {
-  return new Promise((resolve, reject) => {
-    const mime = ['audio/webm;codecs=pcm', 'audio/webm', 'audio/ogg', '']
-      .find(m => !m || MediaRecorder.isTypeSupported(m));
-
-    let recorder;
-    try { recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {}); } 
-    catch(e) { return reject(new Error('MediaRecorder not available: ' + e.message)); }
-
-    const chunks = [];
-    recorder.ondataavailable = ev => { if (ev.data && ev.data.size > 0) chunks.push(ev.data); };
-
-    recorder.onstop = async () => {
-      try {
-        const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
-        const arr  = await blob.arrayBuffer();
-
-        let audioBuf;
-        const decCtx = new AudioContext({ sampleRate: targetSR });
-        try { audioBuf = await decCtx.decodeAudioData(arr); } 
-        catch(_) {
-          await decCtx.close();
-          const decCtx2 = new AudioContext();
-          audioBuf = await decCtx2.decodeAudioData(arr.slice(0));
-          await decCtx2.close();
+async function recordAudio(audioCtx, stream, durationSecs) {
+  return new Promise(async (resolve, reject) => {
+    // 1. Create an inline AudioWorklet to capture raw PCM data
+    const workletCode = `
+      class PCMRecorder extends AudioWorkletProcessor {
+        process(inputs, outputs, parameters) {
+          const input = inputs[0];
+          if (input && input.length > 0 && input[0]) {
+            // Send the raw Float32Array channel data back to the main thread
+            this.port.postMessage(new Float32Array(input[0]));
+          }
+          return true;
         }
-
-        let pcm;
-        if (Math.abs(audioBuf.sampleRate - targetSR) < 2) {
-          pcm = audioBuf.getChannelData(0);
-        } else {
-          const nOut   = Math.ceil(audioBuf.duration * targetSR);
-          const offCtx = new OfflineAudioContext(1, nOut, targetSR);
-          const src    = offCtx.createBufferSource();
-          src.buffer   = audioBuf;
-          src.connect(offCtx.destination);
-          src.start(0);
-          const rendered = await offCtx.startRendering();
-          pcm = rendered.getChannelData(0);
-        }
-
-        if (pcm.length < targetSR * 0.3)
-          return reject(new Error('Recorded < 300 ms of audio. Check the mic.'));
-
-        resolve(new Float32Array(pcm));
-      } catch(e) {
-        reject(new Error('Failed to decode recorded audio: ' + e.message));
       }
-    };
+      registerProcessor('pcm-recorder', PCMRecorder);
+    `;
+    const blob = new Blob([workletCode], { type: 'application/javascript' });
+    const workletUrl = URL.createObjectURL(blob);
 
-    recorder.onerror = e => reject(new Error('MediaRecorder error: ' + (e.error || e)));
-    recorder.start(250);
-    setTimeout(() => { if (recorder.state === 'recording') recorder.stop(); }, durationSecs * 1000);
+    try {
+      // 2. Load the Worklet into the AudioContext
+      await audioCtx.audioWorklet.addModule(workletUrl);
+      
+      // 3. Connect the microphone stream to the Worklet
+      const sourceNode = audioCtx.createMediaStreamSource(stream);
+      const recorderNode = new AudioWorkletNode(audioCtx, 'pcm-recorder');
+      
+      const chunks = [];
+      let totalSamples = 0;
+      const maxSamples = Math.ceil(audioCtx.sampleRate * durationSecs);
+
+      // 4. Collect the raw data as it streams in
+      recorderNode.port.onmessage = (e) => {
+        const chunk = e.data; 
+        chunks.push(chunk);
+        totalSamples += chunk.length;
+        
+        // Once we have recorded enough seconds of audio, stop and resolve
+        if (totalSamples >= maxSamples) {
+          sourceNode.disconnect();
+          recorderNode.disconnect();
+          
+          // Flatten the chunks into one continuous array
+          const result = new Float32Array(totalSamples);
+          let offset = 0;
+          for (const c of chunks) {
+            result.set(c, offset);
+            offset += c.length;
+          }
+          resolve(result.slice(0, maxSamples));
+        }
+      };
+
+      sourceNode.connect(recorderNode);
+      // Failsafe timeout
+      setTimeout(() => reject(new Error("Recording timed out.")), (durationSecs + 2) * 1000);
+
+    } catch (err) {
+      // Improved error reporting for AudioWorklets
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      reject(new Error('Audio Capture Error: ' + errorMsg));
+    } finally {
+      URL.revokeObjectURL(workletUrl); // Cleanup
+    }
   });
 }
 
@@ -911,11 +922,17 @@ async function startRecording() {
     }
 
     const selectedOutput = outDeviceSel.value;
-    const ctxOptions = { sampleRate: 48000 };
-    if (selectedOutput && typeof AudioContext.prototype.setSinkId !== 'undefined') {
-      ctxOptions.sinkId = selectedOutput;
+    // Always initialize the context at 48kHz first
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    
+    // Explicitly set the routing AFTER creation (The correct browser API pattern)
+    if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
+      try { 
+        await audioCtx.setSinkId(selectedOutput); 
+      } catch (e) { 
+        throw new Error('Could not route to selected output. Set it as your system default. ' + e.message); 
+      }
     }
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)(ctxOptions);
     
     capturedSR = audioCtx.sampleRate;
     $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
@@ -979,7 +996,7 @@ async function startRecording() {
     setStatus('recording', 'Starting recorder...');
     setProgress(40);
 
-    const recordPromise = recordAudio(stream, totalRecSecs, capturedSR);
+    const recordPromise = recordAudio(audioCtx, stream, totalRecSecs);
     await new Promise(r => setTimeout(r, 200));
 
     const gain = audioCtx.createGain();
@@ -1002,6 +1019,27 @@ async function startRecording() {
     clearInterval(ticker);
     stream.getTracks().forEach(t => t.stop());
 
+    // --- SIGNAL QUALITY CHECK START ---
+    let peak = 0, rms = 0;
+    for (const s of capturedRec) { 
+      const a = Math.abs(s); 
+      if (a > peak) peak = a; 
+      rms += s * s; 
+    }
+    rms = Math.sqrt(rms / capturedRec.length);
+
+    if (peak >= 0.99) {
+      setStatus('warning', `⚠ CLIPPING DETECTED (Peak: ${peak.toFixed(2)}). Lower your output volume.`);
+      infoBox.innerHTML = '<span style="color:var(--red)">WARNING:</span> Signal clipped. Measurement may be inaccurate.';
+    } else if (peak < 0.01) {
+      setStatus('warning', `⚠ SIGNAL TOO LOW (Peak: ${peak.toFixed(3)}). Check mic/gain.`);
+      infoBox.innerHTML = '<span style="color:var(--red)">WARNING:</span> Very weak signal detected.';
+    } else if (rms < 1e-4) {
+      // FIX: Throw an error instead of 'return' so the UI resets properly
+      throw new Error('SILENCE DETECTED. Check your input device settings.');
+    }
+    // --- SIGNAL QUALITY CHECK END ---
+
     let dcSum = 0;
     for (let i = 0; i < capturedRec.length; i++) dcSum += capturedRec[i];
     const dcMean = dcSum / capturedRec.length;
@@ -1022,6 +1060,7 @@ async function startRecording() {
     setProgress(0);
   }
 
+  // This ensures the UI unlocks no matter what happens (success or error)
   isMeasuring = false;
   btnRecord.disabled = false;
   updateDeviceLists();
@@ -1145,6 +1184,7 @@ function renderSavedList() {
 // ── Overlays modal ──────────────────────────────────────────────────
 
 function openOverlays() {
+  hideAllModals();
   renderOverlays();
   $('modal-overlays').style.display = 'flex';
   $('modal-scale').style.display   = 'none';
@@ -1276,6 +1316,8 @@ function loadOverlays(event) {
   const reader = new FileReader();
   reader.onload = e => {
     try {
+	  const text = e.target.result.replace(/^\uFEFF/, ''); 
+      const lines = text.trim().split('\n');
       const parsed = JSON.parse(e.target.result);
       if (!Array.isArray(parsed)) throw new Error('Invalid format');
 
@@ -1515,6 +1557,7 @@ btnExport.addEventListener('click', exportCSV);
 btnClear.addEventListener('click', clearAll);
 
 btnScale.addEventListener('click', () => {
+  hideAllModals();
   const sel = $('scale-curve-sel');
   sel.innerHTML = '';
   savedCurves.forEach((c, i) => sel.options.add(new Option(c.name, i)));
@@ -1550,6 +1593,7 @@ function updateScaleSliderFromSel() {
 }
 
 btnSubtract.addEventListener('click', () => {
+  hideAllModals();
   const sela = $('sub-a-sel');
   const selb = $('sub-b-sel');
   sela.innerHTML = ''; selb.innerHTML = '';
@@ -1582,7 +1626,16 @@ function updateSubName() {
   }
 }
 
+function hideAllModals() {
+  ['modal-scale', 'modal-sub', 'modal-overlays', 'modal-edit']
+    .forEach(id => {
+      const el = $(id);
+      if (el) el.style.display = 'none';
+    });
+}
+
 function closeModal() {
+  hideAllModals();
   $('modal-overlay').style.display = 'none';
 }
 
@@ -1591,6 +1644,7 @@ let editOpenedFromOverlays = false;
 let editingColor = null;
 
 function openEditModal(idx) {
+  hideAllModals();
   editingIdx = idx;
   editOpenedFromOverlays = $('modal-overlays').style.display === 'flex'; // ← add this
   const c = savedCurves[idx];
