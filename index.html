@@ -375,6 +375,21 @@ let overlaysSortKey = 'time';
 let overlaysSortDir = 1; // 1 = asc, -1 = desc
 
 let colorIdx = 0, audioCtx = null;
+
+function getNextLiveColor() {
+  // Get a list of all colors currently being used by saved curves
+  const used = new Set(savedCurves.map(c => c.color));
+  
+  // Look ahead to find the first color that isn't being used
+  for (let i = 0; i < COLORS.length; i++) {
+    const c = COLORS[(colorIdx + i) % COLORS.length];
+    if (!used.has(c)) return c;
+  }
+  
+  // Fallback if somehow all 20 colors are used
+  return COLORS[colorIdx % COLORS.length];
+}
+
 let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
 let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
@@ -720,7 +735,9 @@ self.onmessage = function(e) {
 
 function makeWorker() {
   const blob = new Blob([WORKER_SRC], { type: 'application/javascript' });
-  return new Worker(URL.createObjectURL(blob));
+  const url = URL.createObjectURL(blob);
+  const worker = new Worker(url);
+  return { worker, url }; // Return both so we can clean up the URL later
 }
 
 // ───────────────────────────────────────────────────────────────────
@@ -884,7 +901,7 @@ function replot() {
     if (useNorm && !c.isMath) db = normalize(c.freqs, db);       // ← normalize first
     if (c.offset) db = db.map(v => v + c.offset);                // ← offset survives
     traces.push({ x:c.freqs, y:db, name:c.name, mode:'lines',
-      line:{ color:c.color, width:1.5 },
+      line:{ color:c.color, width:1 },
       hovertemplate:'%{y:.1f} dB<extra>'+c.name+'</extra>' });
   });
 
@@ -894,7 +911,7 @@ function replot() {
     if (liveOffset) db = db.map(v => v + liveOffset);            // offset before normalize
     if (useNorm) db = normalize(latestFreqs, db);                // normalize cancels it = correct
     traces.push({ x:latestFreqs, y:db, name:liveName+' *', mode:'lines',
-      line:{ color:COLORS[colorIdx % COLORS.length], width:2 },
+      line:{ color:getNextLiveColor(), width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
   }
 
@@ -1080,13 +1097,24 @@ async function runAnalysis() {
     setProgress(10);
 
     const result = await new Promise((resolve, reject) => {
-      const worker = makeWorker();
+      // Unpack the worker and the url
+      const { worker, url } = makeWorker(); 
+      
       worker.onmessage = e => {
         const d = e.data;
         if (d.type === 'progress') { setProgress(d.pct); setStatus('processing', d.msg); }
-        else if (d.type === 'done') { worker.terminate(); resolve(d); }
+        else if (d.type === 'done') { 
+            worker.terminate(); 
+            URL.revokeObjectURL(url); // <-- CLEANUP ADDED HERE
+            resolve(d); 
+        }
       };
-      worker.onerror = e => { worker.terminate(); reject(new Error('Worker: ' + e.message)); };
+      worker.onerror = e => { 
+          worker.terminate(); 
+          URL.revokeObjectURL(url); // <-- CLEANUP ADDED HERE
+          reject(new Error('Worker: ' + e.message)); 
+      };
+// ... rest of the worker code remains the same
 
       const refBuf = capturedRef.buffer.slice(0);
       const recBuf = capturedRec.buffer.slice(0);
@@ -1302,13 +1330,20 @@ function saveOverlays() {
   const json      = JSON.stringify(payload, null, 2);
   const ts        = new Date().toISOString().slice(0,19).replace(/[T:]/g,'-');
   const filename  = `soranikrta-${savedCurves.length}curves-${ts}.txt`;
+  
+  const blob      = new Blob([json], { type:'text/plain' });
+  const url       = URL.createObjectURL(blob);
+  
   const a         = document.createElement('a');
-  a.href          = URL.createObjectURL(new Blob([json], { type:'text/plain' }));
+  a.href          = url;
   a.download      = filename;
   a.click();
+  
+  // Clean up the URL out of memory 1 second after the download starts
+  setTimeout(() => URL.revokeObjectURL(url), 1000); 
+  
   setStatus('ready', `Saved ${savedCurves.length} curves to ${filename}`);
 }
-
 // ── Load overlays from .txt ────────────────────────────────────────
 function loadOverlays(event) {
   const file = event.target.files[0];
@@ -1424,10 +1459,16 @@ function exportCSV() {
   const filename = `soranikrta-export-${all.length}curves-${ts}.csv`;
   // --- TIMESTAMP FIX END ---
 
+  const blob = new Blob([csv], { type:'text/csv' });
+  const url = URL.createObjectURL(blob);
+  
   const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([csv], { type:'text/csv' }));
-  a.download = filename; // Uses the new dynamic filename
+  a.href = url;
+  a.download = filename; 
   a.click();
+  
+  // Clean up the URL out of memory 1 second after the download starts
+  setTimeout(() => URL.revokeObjectURL(url), 1000); 
 }
 
 function importCSV(event) {
@@ -1901,7 +1942,7 @@ savedCurves.forEach(c => {
     }
     const plotIr = Array.from(slice).map(v => (v / globalMax) * 100);
     traces.push({ x: timeMs, y: plotIr, name: liveName + ' *', mode: 'lines',
-      line: { color: COLORS[colorIdx % COLORS.length], width: 1.5 },
+      line: { color: getNextLiveColor(), width: 1.5 },
       hovertemplate: '%{y:.1f}%<extra>' + liveName + '</extra>' });
   }
 
