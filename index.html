@@ -964,12 +964,7 @@ async function startRecording() {
           echoCancellation: { exact: false }, 
           noiseSuppression: { exact: false }, 
           autoGainControl: { exact: false }, 
-          channelCount: { ideal: 2 }, 
-          sampleRate: { ideal: 48000 }, 
-          googAutoGainControl: false,
-          googNoiseSuppression: false,
-          googHighpassFilter: false,
-          googEchoCancellation: false
+          channelCount: { ideal: 1 }
         };
     
         if (selectedInput) {
