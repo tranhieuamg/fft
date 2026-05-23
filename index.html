@@ -964,7 +964,8 @@ async function startRecording() {
           echoCancellation: { exact: false }, 
           noiseSuppression: { exact: false }, 
           autoGainControl: { exact: false }, 
-          channelCount: { ideal: 1 }
+          channelCount: { ideal: 1 },
+		  sampleRate: { ideal: 48000 }
         };
     
         if (selectedInput) {
