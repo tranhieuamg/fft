@@ -173,6 +173,7 @@
           <button class="btn-secondary" id="btn-subtract" disabled style="flex:1;">SUBTRACT</button>
         </div>
         <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
+		<button class="btn-secondary" id="btn-eq">EQ / PREVIEW</button>
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE OVERLAY</button>
@@ -345,6 +346,64 @@
   </div>
 </div>
 
+<div id="modal-eq" style="display:none; background:var(--surface); border:1px solid var(--border);
+  padding:24px; border-radius:4px; width:680px; max-width:95vw; max-height:85vh;
+  flex-direction:column; gap:16px; overflow:hidden;">
+
+  <!-- Header -->
+  <div style="display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); padding-bottom:12px; flex-shrink:0;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:2px;">
+      PARAMETRIC EQ
+    </div>
+    <div style="display:flex; gap:8px; align-items:center;">
+      <label style="font-family:var(--mono); font-size:10px; color:var(--text-dim);
+        display:flex; align-items:center; gap:6px; cursor:pointer;">
+        <input type="checkbox" id="eq-enabled-chk" onchange="toggleEqEnabled(this.checked)">
+        ENABLED
+      </label>
+      <button class="btn-secondary" onclick="addEqBand()"
+        style="width:auto; padding:6px 12px; font-size:10px;">+ ADD BAND</button>
+      <button class="btn-secondary" onclick="resetEq()"
+        style="width:auto; padding:6px 12px; font-size:10px;">RESET</button>
+      <button class="btn-secondary" onclick="closeModal()"
+        style="width:auto; padding:6px 12px; font-size:10px;">CLOSE</button>
+    </div>
+  </div>
+
+  <!-- Column headers -->
+  <div style="display:grid; grid-template-columns:28px 90px 100px 80px 80px 60px 28px;
+    gap:8px; font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    letter-spacing:1px; text-transform:uppercase; flex-shrink:0; padding:0 4px;">
+    <div></div>
+    <div>Type</div>
+    <div>Freq (Hz)</div>
+    <div>Gain (dB)</div>
+    <div>Q</div>
+    <div>Shape</div>
+    <div></div>
+  </div>
+
+  <!-- Band rows -->
+  <div id="eq-bands-body"
+    style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px; padding:0 4px;">
+  </div>
+
+  <!-- Footer note -->
+  <div style="font-family:var(--mono); font-size:10px; color:var(--text-dim);
+    border-top:1px solid var(--border); padding-top:10px; flex-shrink:0;">
+    Dotted lines on the FR plot show the EQ preview. Use
+    <strong style="color:var(--accent)">MEASURE WITH EQ</strong> to record a real measurement
+    with this EQ applied to the output signal.
+  </div>
+
+  <!-- Measure with EQ button -->
+  <div style="display:flex; justify-content:flex-end; flex-shrink:0;">
+    <button class="btn-primary" onclick="measureWithEq()"
+      style="width:auto; padding:10px 20px;">&#9679; MEASURE WITH EQ</button>
+  </div>
+</div>
+
 </div>
 
 <script>
@@ -392,6 +451,18 @@ function getNextLiveColor() {
 
 let savedCurves = [], latestFreqs = null, latestDb = null, latestIr = null, latestPeakIdx = null;
 let isMeasuring = false, measureCount = 1, liveOffset = 0;
+
+// ── EQ State ────────────────────────────────────────────────────────
+let eqEnabled = false;
+// Each band: { type, freq, gain, q, enabled }
+// type: 'peaking' | 'lowShelf' | 'highShelf'
+let eqBands = [
+  { type: 'lowShelf',  freq: 100,  gain: 0, q: 0.7, enabled: true },
+  { type: 'peaking',   freq: 1000, gain: 0, q: 1.0, enabled: true },
+  { type: 'peaking',   freq: 3000, gain: 0, q: 1.0, enabled: true },
+  { type: 'peaking',   freq: 8000, gain: 0, q: 1.0, enabled: true },
+  { type: 'highShelf', freq: 10000,gain: 0, q: 0.7, enabled: true },
+];
 
 let capturedRef = null;
 let capturedRec = null;
@@ -890,6 +961,179 @@ function normalize(freqs, db) {
     return db.map(v => v - maxVal);
 }
 
+// ── EQ Math Preview ─────────────────────────────────────────────────
+function calcBiquadResponse(band, freqsArr, sr) {
+  // Returns dB gain array for a single biquad band at each frequency in freqsArr
+  // Uses the Audio EQ Cookbook bilinear transform formulas
+  if (!band.enabled || band.gain === 0) return freqsArr.map(() => 0);
+
+  const f0 = band.freq;
+  const dBgain = band.gain;
+  const Q = band.q;
+  const A = Math.pow(10, dBgain / 40); // amplitude (not power)
+  const w0 = 2 * Math.PI * f0 / sr;
+  const cosW = Math.cos(w0);
+  const sinW = Math.sin(w0);
+  const alpha = sinW / (2 * Q);
+
+  let b0, b1, b2, a0, a1, a2;
+
+  if (band.type === 'peaking') {
+    b0 =  1 + alpha * A;
+    b1 = -2 * cosW;
+    b2 =  1 - alpha * A;
+    a0 =  1 + alpha / A;
+    a1 = -2 * cosW;
+    a2 =  1 - alpha / A;
+  } else if (band.type === 'lowShelf') {
+    const sqA = Math.sqrt(A);
+    b0 =      A * ((A+1) - (A-1)*cosW + 2*sqA*alpha);
+    b1 =  2 * A * ((A-1) - (A+1)*cosW);
+    b2 =      A * ((A+1) - (A-1)*cosW - 2*sqA*alpha);
+    a0 =           (A+1) + (A-1)*cosW + 2*sqA*alpha;
+    a1 =     -2 * ((A-1) + (A+1)*cosW);
+    a2 =           (A+1) + (A-1)*cosW - 2*sqA*alpha;
+  } else if (band.type === 'highShelf') {
+    const sqA = Math.sqrt(A);
+    b0 =      A * ((A+1) + (A-1)*cosW + 2*sqA*alpha);
+    b1 = -2 * A * ((A-1) + (A+1)*cosW);
+    b2 =      A * ((A+1) + (A-1)*cosW - 2*sqA*alpha);
+    a0 =           (A+1) - (A-1)*cosW + 2*sqA*alpha;
+    a1 =      2 * ((A-1) - (A+1)*cosW);
+    a2 =           (A+1) - (A-1)*cosW - 2*sqA*alpha;
+  } else {
+    return freqsArr.map(() => 0);
+  }
+
+  // Normalise by a0
+  b0 /= a0; b1 /= a0; b2 /= a0;
+  a1 /= a0; a2 /= a0;
+
+  return freqsArr.map(f => {
+    const w = 2 * Math.PI * f / sr;
+
+    // z^-1 = e^-jw = cos(w) - j*sin(w)
+    const nRe = b0 + b1*Math.cos(w) + b2*Math.cos(2*w);
+    const nIm =    - b1*Math.sin(w) - b2*Math.sin(2*w);
+    const dRe = 1  + a1*Math.cos(w) + a2*Math.cos(2*w);
+    const dIm =    - a1*Math.sin(w) - a2*Math.sin(2*w);
+
+    // |H| = |num| / |den|
+    const magNum = Math.sqrt(nRe*nRe + nIm*nIm);
+    const magDen = Math.sqrt(dRe*dRe + dIm*dIm);
+    const mag = magDen > 1e-30 ? magNum / magDen : 0;
+    return 20 * Math.log10(Math.max(mag, 1e-30));
+  });
+}
+
+function calcEqResponse(freqsArr, sr) {
+  // Sum of all enabled bands' dB responses
+  const result = new Float64Array(freqsArr.length);
+  eqBands.forEach(band => {
+    const resp = calcBiquadResponse(band, freqsArr, sr);
+    for (let i = 0; i < result.length; i++) result[i] += resp[i];
+  });
+  return Array.from(result);
+}
+
+// ── EQ Modal ─────────────────────────────────────────────────────────
+
+function openEqModal() {
+  hideAllModals();
+  renderEqBands();
+  $('eq-enabled-chk').checked = eqEnabled;
+  $('modal-eq').style.display = 'flex';
+  $('modal-overlay').style.display = 'flex';
+}
+
+function toggleEqEnabled(val) {
+  eqEnabled = val;
+  replot(); // instantly update preview
+}
+
+function addEqBand() {
+  eqBands.push({ type: 'peaking', freq: 1000, gain: 0, q: 1.0, enabled: true });
+  renderEqBands();
+  replot();
+}
+
+function removeEqBand(i) {
+  eqBands.splice(i, 1);
+  renderEqBands();
+  replot();
+}
+
+function resetEq() {
+  eqBands.forEach(b => { b.gain = 0; });
+  renderEqBands();
+  replot();
+}
+
+function renderEqBands() {
+  const body = $('eq-bands-body');
+  if (!eqBands.length) {
+    body.innerHTML = '<div style="font-family:var(--mono);font-size:11px;color:var(--text-dim);text-align:center;padding:16px;">No bands. Click + ADD BAND.</div>';
+    return;
+  }
+  body.innerHTML = eqBands.map((b, i) => {
+    const freqOpts = [20,30,40,50,60,80,100,120,150,200,250,300,400,500,600,800,
+      1000,1200,1500,2000,2500,3000,4000,5000,6000,8000,10000,12000,15000,16000,20000]
+      .map(f => '<option value="' + f + '"' + (b.freq === f ? ' selected' : '') + '>' 
+        + (f >= 1000 ? (f/1000) + 'k' : f) + '</option>').join('');
+    const typeOpts = ['peaking','lowShelf','highShelf']
+      .map(t => '<option value="' + t + '"' + (b.type === t ? ' selected' : '') + '>'
+        + (t === 'peaking' ? 'Peak' : t === 'lowShelf' ? 'Lo Shelf' : 'Hi Shelf') + '</option>').join('');
+    const qDisabled = (b.type !== 'peaking') ? 'disabled style="opacity:0.3"' : '';
+    return `<div style="display:grid; grid-template-columns:28px 90px 100px 80px 80px 60px 28px;
+      gap:8px; align-items:center; background:var(--surface2);
+      border:1px solid ${b.enabled ? 'var(--border)' : 'transparent'};
+      border-radius:3px; padding:6px 4px; font-family:var(--mono); font-size:11px;">
+      <div style="display:flex;align-items:center;justify-content:center;">
+        <input type="checkbox" ${b.enabled ? 'checked' : ''}
+          onchange="eqBands[${i}].enabled=this.checked; replot();"
+          style="cursor:pointer;accent-color:var(--accent);">
+      </div>
+      <select onchange="eqBands[${i}].type=this.value; renderEqBands(); replot();"
+        style="background:var(--surface);font-size:10px;padding:2px 4px;">${typeOpts}</select>
+      <select onchange="eqBands[${i}].freq=parseFloat(this.value); replot();"
+        style="background:var(--surface);font-size:10px;padding:2px 4px;">${freqOpts}</select>
+      <div style="display:flex;flex-direction:column;gap:1px;">
+        <input type="range" min="-12" max="12" step="0.5" value="${b.gain}"
+          oninput="eqBands[${i}].gain=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'dB'; replot();"
+          style="width:100%;accent-color:var(--accent);">
+        <div style="text-align:center;font-size:9px;color:var(--accent);">${b.gain.toFixed(1)}dB</div>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:1px;">
+        <input type="range" min="0.3" max="4" step="0.1" value="${b.q}" ${qDisabled}
+          oninput="eqBands[${i}].q=parseFloat(this.value); this.nextElementSibling.textContent='Q'+parseFloat(this.value).toFixed(1); replot();"
+          style="width:100%;accent-color:var(--accent);">
+        <div style="text-align:center;font-size:9px;color:var(--text-dim);">Q${b.q.toFixed(1)}</div>
+      </div>
+      <div style="font-size:9px;color:var(--text-dim);text-align:center;line-height:1.3;">
+        ${b.gain > 0 ? '+' : ''}${b.gain.toFixed(1)}<br>@${b.freq >= 1000 ? (b.freq/1000)+'k' : b.freq}
+      </div>
+      <button onclick="removeEqBand(${i})"
+        style="background:none;border:none;color:var(--text-dim);cursor:pointer;font-size:14px;
+        padding:0;line-height:1;" title="Remove band">×</button>
+    </div>`;
+  }).join('');
+}
+
+function measureWithEq() {
+  if (!eqEnabled || !eqBands.some(b => b.enabled && b.gain !== 0)) {
+    setStatus('', 'Enable EQ and set at least one band gain before measuring.');
+    return;
+  }
+  closeModal();
+  // Auto-name the curve with an EQ tag so it's identifiable
+  const eqSummary = eqBands
+    .filter(b => b.enabled && b.gain !== 0)
+    .map(b => (b.freq >= 1000 ? (b.freq/1000) + 'k' : b.freq) + (b.gain > 0 ? '+' : '') + b.gain.toFixed(0))
+    .join(' ');
+  nameInput.value = 'EQ: ' + eqSummary;
+  startRecording();
+}
+
 function replot() {
   const yRange = parseInt(ySlider.value);
   const useNorm   = normChk.checked;
@@ -914,7 +1158,62 @@ function replot() {
       line:{ color:getNextLiveColor(), width:1.5 },
       hovertemplate:'%{y:.1f} dB<extra>'+liveName+'</extra>' });
   }
+  // ── EQ Preview Overlays ──────────────────────────────────────────
+  if (eqEnabled && savedCurves.length > 0) {
+    // Pick a representative freq axis from the first visible curve
+    const refCurve = savedCurves.find(c => c.visible !== false);
+    if (refCurve) {
+      const previewSr = capturedSR || 48000;
+      const eqDb = calcEqResponse(Array.from(refCurve.freqs), previewSr);
 
+      // 1. Show the EQ shape itself as a thin dashed white line
+      traces.push({
+        x: Array.from(refCurve.freqs),
+        y: eqDb,
+        name: 'EQ Shape',
+        mode: 'lines',
+        line: { color: 'rgba(255,255,255,0.5)', width: 1, dash: 'dash' },
+        hovertemplate: '%{y:.1f} dB<extra>EQ Shape</extra>'
+      });
+
+      // 2. For each visible saved curve, add a preview with EQ applied
+      savedCurves.forEach(c => {
+        if (c.visible === false) return;
+        let db = c.rawDb.slice();
+        if (useNorm && !c.isMath) db = normalize(c.freqs, db);
+        if (c.offset) db = db.map(v => v + c.offset);
+        // Add EQ response interpolated onto this curve's frequency axis
+        const eqForThis = calcEqResponse(Array.from(c.freqs), previewSr);
+        const dbWithEq = db.map((v, i) => v + eqForThis[i]);
+        traces.push({
+          x: c.freqs, y: dbWithEq,
+          name: c.name + ' +EQ',
+          mode: 'lines',
+          line: { color: c.color, width: 1.5, dash: 'dot' },
+          hovertemplate: '%{y:.1f} dB<extra>' + c.name + ' +EQ</extra>'
+        });
+      });
+    }
+  }
+  
+    // ── ADD THIS: EQ preview for live measurement ────────────────────
+  if (eqEnabled && latestFreqs) {
+    const previewSr = capturedSR || 48000;
+    const liveName = nameInput.value || 'Live';
+    let liveDb = latestDb.slice();
+    if (liveOffset) liveDb = liveDb.map(v => v + liveOffset);
+    if (useNorm) liveDb = normalize(latestFreqs, liveDb);
+    const eqForLive = calcEqResponse(Array.from(latestFreqs), previewSr);
+    const liveDbWithEq = liveDb.map((v, i) => v + eqForLive[i]);
+    traces.push({
+      x: latestFreqs, y: liveDbWithEq,
+      name: liveName + ' +EQ',
+      mode: 'lines',
+      line: { color: getNextLiveColor(), width: 1.5, dash: 'dot' },
+      hovertemplate: '%{y:.1f} dB<extra>' + liveName + ' +EQ</extra>'
+    });
+  }
+  
   Plotly.react('plot', traces, makePlotLayout(yRange), { displayModeBar:false, responsive:true });
   
   const totalCurves = (latestFreqs ? 1 : 0) + savedCurves.length;
@@ -961,9 +1260,9 @@ async function startRecording() {
     
         // The "Nuclear" constraints to force raw audio on stubborn Android builds
         const audioConstraints = { 
-          echoCancellation: { exact: false }, 
-          noiseSuppression: { exact: false }, 
-          autoGainControl: { exact: false }, 
+          echoCancellation: false, 
+          noiseSuppression: false, 
+          autoGainControl:  false, 
           channelCount: { ideal: 1 },
 		  sampleRate: { ideal: 48000 }
         };
@@ -1017,7 +1316,26 @@ async function startRecording() {
     gain.connect(audioCtx.destination);
     const src = audioCtx.createBufferSource();
     src.buffer = playBuf;
-    src.connect(gain);
+
+    // ── Insert EQ filter chain if enabled ───────────────────────────
+    if (eqEnabled && eqBands.some(b => b.enabled && b.gain !== 0)) {
+      const activeBands = eqBands.filter(b => b.enabled && b.gain !== 0);
+      // Build chain: src -> filter[0] -> filter[1] -> ... -> gain
+      let prevNode = src;
+      activeBands.forEach(band => {
+        const filter = audioCtx.createBiquadFilter();
+        filter.type = band.type.toLowerCase();
+        filter.frequency.value = band.freq;
+        filter.gain.value = band.gain;
+        filter.Q.value = band.q;
+        prevNode.connect(filter);
+        prevNode = filter;
+      });
+      prevNode.connect(gain);
+      setStatus('recording', 'Recording with EQ active...');
+    } else {
+      src.connect(gain);
+    }
     src.start();
 
     const t0 = performance.now();
@@ -1348,8 +1666,7 @@ function loadOverlays(event) {
   reader.onload = e => {
     try {
 	  const text = e.target.result.replace(/^\uFEFF/, ''); 
-      const lines = text.trim().split('\n');
-      const parsed = JSON.parse(e.target.result);
+      const parsed = JSON.parse(text);                     // ← use text, not e.target.result
       if (!Array.isArray(parsed)) throw new Error('Invalid format');
 
       let loaded = 0;
@@ -1664,7 +1981,7 @@ function updateSubName() {
 }
 
 function hideAllModals() {
-  ['modal-scale', 'modal-sub', 'modal-overlays', 'modal-edit']
+  ['modal-scale', 'modal-sub', 'modal-overlays', 'modal-edit', 'modal-eq']
     .forEach(id => {
       const el = $(id);
       if (el) el.style.display = 'none';
@@ -1681,9 +1998,9 @@ let editOpenedFromOverlays = false;
 let editingColor = null;
 
 function openEditModal(idx) {
-  hideAllModals();
   editingIdx = idx;
   editOpenedFromOverlays = $('modal-overlays').style.display === 'flex'; // ← add this
+  hideAllModals();
   const c = savedCurves[idx];
   editingColor = c.color;
 
@@ -1850,6 +2167,8 @@ btnViewBoth.addEventListener('click', () => setViewMode('both'));
 
 $('btn-overlays').addEventListener('click', openOverlays);
 $('btn-save-overlays').addEventListener('click', saveOverlays);
+
+$('btn-eq').addEventListener('click', openEqModal);
 
 function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
