@@ -52,6 +52,8 @@
   .toolbar .slider-popover { bottom: auto; top: 100%; } /* Top toolbar drops down, bottom toolbar pops up */
   .param-container:focus-within .slider-popover { display: block; }
 
+  #player-progress-container:hover { background: var(--border); filter: brightness(1.5); }
+  
   /* Ovelay table */
   .ov-row {
   display: grid;
@@ -174,6 +176,7 @@
         </div>
         <button class="btn-secondary" id="btn-overlays">EDIT OVERLAYS</button>
 		<button class="btn-secondary" id="btn-eq">EQ / PREVIEW</button>
+		<button class="btn-secondary" id="btn-player">&#9834; MUSIC PLAYER</button>
         <div style="display:flex; gap:4px;">
           <button class="btn-secondary" onclick="savePng()" style="flex:1;">SAVE PNG</button>
           <button class="btn-secondary" id="btn-save" disabled style="flex:1;">SAVE OVERLAY</button>
@@ -384,6 +387,16 @@
     <div></div>
   </div>
 
+  <!-- ── EQ CURVE DISPLAY ── ADD THIS BLOCK ──────────────────────── -->
+  <div style="flex-shrink:0; position:relative; height:120px;
+    background:var(--surface2); border:1px solid var(--border); border-radius:3px;">
+    <canvas id="eq-curve-canvas"
+      style="width:100%; height:100%; display:block;"></canvas>
+    <div style="position:absolute; top:4px; left:8px;
+      font-family:var(--mono); font-size:9px; color:var(--text-dim);
+      pointer-events:none; letter-spacing:1px;">EQ RESPONSE</div>
+  </div>
+  
   <!-- Band rows -->
   <div id="eq-bands-body"
     style="overflow-y:auto; flex:1; display:flex; flex-direction:column; gap:6px; padding:0 4px;">
@@ -403,7 +416,76 @@
       style="width:auto; padding:10px 20px;">&#9679; MEASURE WITH EQ</button>
   </div>
 </div>
+<div id="modal-player" style="display:none; background:var(--surface); border:1px solid var(--border);
+  padding:24px; border-radius:4px; width:480px; max-width:95vw;
+  flex-direction:column; gap:16px;">
 
+  <!-- Header -->
+  <div style="display:flex; align-items:center; justify-content:space-between;
+    border-bottom:1px solid var(--border); padding-bottom:12px;">
+    <div style="font-family:var(--mono); color:var(--accent); font-size:14px; letter-spacing:2px;">
+      MUSIC PLAYER
+    </div>
+    <button class="btn-secondary" onclick="closeModal()"
+      style="width:auto; padding:6px 12px; font-size:10px;">CLOSE</button>
+  </div>
+
+  <!-- File loader -->
+  <div style="display:flex; flex-direction:column; gap:6px;">
+    <label class="btn-secondary"
+      style="text-align:center; cursor:pointer; padding:10px;">
+      &#128193; LOAD AUDIO FILE (.m4a / .mp3 / .wav / .flac)
+      <input type="file" id="player-file-input"
+        accept=".m4a,.mp3,.wav,.flac,.aac,.ogg"
+        style="display:none;" onchange="playerLoadFile(event)">
+    </label>
+    <div id="player-filename"
+      style="font-family:var(--mono); font-size:10px; color:var(--text-dim);
+      text-align:center; min-height:14px;">No file loaded</div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="player-progress-container"
+    style="height:4px; background:var(--border); border-radius:2px;
+    overflow:hidden; cursor:pointer;" onclick="playerSeek(event)">
+    <div id="player-progress-bar"
+      style="height:100%; width:0%; background:var(--accent);
+      border-radius:2px; transition:width 0.25s linear; pointer-events:none;">
+    </div>
+  </div>
+
+  <!-- Time display -->
+  <div style="display:flex; justify-content:space-between;
+    font-family:var(--mono); font-size:10px; color:var(--text-dim);">
+    <span id="player-time-cur">0:00</span>
+    <span id="player-time-dur">0:00</span>
+  </div>
+
+  <!-- Transport controls -->
+  <div style="display:flex; gap:8px; justify-content:center;">
+    <button class="btn-secondary" id="btn-player-play" onclick="playerTogglePlay()"
+      style="flex:1; font-size:16px;" disabled>&#9654;</button>
+    <button class="btn-secondary" id="btn-player-stop" onclick="playerStop()"
+      style="flex:1; font-size:16px;" disabled>&#9632;</button>
+  </div>
+
+  <!-- EQ status indicator -->
+  <div id="player-eq-status"
+    style="font-family:var(--mono); font-size:10px; text-align:center;
+    padding:6px; border-radius:3px; background:var(--surface2);">
+    EQ: OFF — open EQ / PREVIEW to configure
+  </div>
+
+  <!-- Volume -->
+  <div style="display:flex; align-items:center; gap:10px;
+    font-family:var(--mono); font-size:10px; color:var(--text-dim);">
+    <span>VOL</span>
+    <input type="range" id="player-vol" min="0" max="1" step="0.02" value="0.8"
+      oninput="playerSetVolume(this.value)"
+      style="flex:1; accent-color:var(--accent);">
+    <span id="player-vol-disp">80%</span>
+  </div>
+</div>
 </div>
 
 <script>
@@ -454,6 +536,16 @@ let isMeasuring = false, measureCount = 1, liveOffset = 0;
 
 // ── EQ State ────────────────────────────────────────────────────────
 let eqEnabled = false;
+// ── Music Player State ───────────────────────────────────────────────
+let playerCtx        = null;   // separate AudioContext for music playback
+let playerBuffer     = null;   // decoded AudioBuffer of the loaded file
+let playerSource     = null;   // current AudioBufferSourceNode
+let playerGain       = null;   // master gain node for the player
+let playerFilters    = [];     // active BiquadFilterNodes
+let playerStartTime  = 0;      // audioCtx.currentTime when playback started
+let playerOffset     = 0;      // track position in seconds at last play/pause
+let playerIsPlaying  = false;
+let playerFileName   = '';
 // Each band: { type, freq, gain, q, enabled }
 // type: 'peaking' | 'lowShelf' | 'highShelf'
 let eqBands = [
@@ -599,7 +691,9 @@ window.togglePhase = function(idx) {
   renderSavedList();  // re-render so button colour updates
   replotIr();
 };
-
+window.addEventListener('resize', () => {
+  if ($('modal-eq').style.display === 'flex') renderEqCurve();
+});
 // ───────────────────────────────────────────────────────────────────
 //  WEB WORKER SOURCE
 // ───────────────────────────────────────────────────────────────────
@@ -1036,6 +1130,162 @@ function calcEqResponse(freqsArr, sr) {
   return Array.from(result);
 }
 
+function renderEqCurve() {
+  const canvas = $('eq-curve-canvas');
+  if (!canvas) return;
+
+  // Match canvas pixel size to its CSS display size for sharp rendering
+  const W = canvas.offsetWidth;
+  const H = canvas.offsetHeight;
+  if (W === 0 || H === 0) return;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // ── Layout constants ─────────────────────────────────────────────
+  const PAD_L = 36, PAD_R = 12, PAD_T = 14, PAD_B = 18;
+  const plotW = W - PAD_L - PAD_R;
+  const plotH = H - PAD_T - PAD_B;
+
+  const DB_MAX = 15;   // Y axis range: ±15dB
+  const F_LO   = 20;
+  const F_HI   = 20000;
+  const SR     = capturedSR || 48000;
+
+  // ── Helper: frequency → X pixel ─────────────────────────────────
+  function fToX(f) {
+    return PAD_L + (Math.log10(f / F_LO) / Math.log10(F_HI / F_LO)) * plotW;
+  }
+  // ── Helper: dB → Y pixel ────────────────────────────────────────
+  function dbToY(db) {
+    return PAD_T + (1 - (db + DB_MAX) / (2 * DB_MAX)) * plotH;
+  }
+
+  // ── Grid lines ───────────────────────────────────────────────────
+  ctx.strokeStyle = '#1a2030';
+  ctx.lineWidth = 1;
+
+  // Horizontal dB lines: -12, -6, 0, +6, +12
+  [-12, -6, 0, 6, 12].forEach(db => {
+    const y = Math.round(dbToY(db)) + 0.5;
+    ctx.beginPath();
+    ctx.moveTo(PAD_L, y);
+    ctx.lineTo(PAD_L + plotW, y);
+    ctx.stroke();
+    // dB label
+    ctx.fillStyle = db === 0 ? '#3a4a5a' : '#2a3444';
+    ctx.font = '9px Share Tech Mono, monospace';
+    ctx.textAlign = 'right';
+    ctx.fillText((db > 0 ? '+' : '') + db, PAD_L - 4, y + 3);
+  });
+
+  // Vertical frequency lines
+  [50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000].forEach(f => {
+    const x = Math.round(fToX(f)) + 0.5;
+    ctx.beginPath();
+    ctx.strokeStyle = '#1a2030';
+    ctx.moveTo(x, PAD_T);
+    ctx.lineTo(x, PAD_T + plotH);
+    ctx.stroke();
+    // Freq label
+    const label = f >= 1000 ? (f / 1000) + 'k' : f;
+    ctx.fillStyle = '#2a3444';
+    ctx.font = '8px Share Tech Mono, monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, x, H - 3);
+  });
+
+  // ── Zero line (0 dB) — draw on top of grid, slightly brighter ────
+  ctx.strokeStyle = '#2a3a4a';
+  ctx.lineWidth = 1;
+  const zeroY = Math.round(dbToY(0)) + 0.5;
+  ctx.beginPath();
+  ctx.moveTo(PAD_L, zeroY);
+  ctx.lineTo(PAD_L + plotW, zeroY);
+  ctx.stroke();
+
+  // ── Compute EQ response across log-spaced frequency points ───────
+  const NUM_POINTS = 300;
+  const freqs = [];
+  for (let i = 0; i < NUM_POINTS; i++) {
+    freqs.push(F_LO * Math.pow(F_HI / F_LO, i / (NUM_POINTS - 1)));
+  }
+
+  const dbVals = eqEnabled
+    ? calcEqResponse(freqs, SR)
+    : freqs.map(() => 0);
+
+  // Clamp to display range
+  const clamped = dbVals.map(v => Math.max(-DB_MAX, Math.min(DB_MAX, v)));
+
+  // ── Build path ────────────────────────────────────────────────────
+  const points = freqs.map((f, i) => ({ x: fToX(f), y: dbToY(clamped[i]) }));
+
+  // Filled area
+  const grad = ctx.createLinearGradient(0, PAD_T, 0, PAD_T + plotH);
+  if (eqEnabled) {
+    grad.addColorStop(0,   'rgba(0, 229, 255, 0.18)');
+    grad.addColorStop(0.5, 'rgba(0, 229, 255, 0.06)');
+    grad.addColorStop(1,   'rgba(0, 229, 255, 0.18)');
+  } else {
+    grad.addColorStop(0,   'rgba(90, 106, 122, 0.08)');
+    grad.addColorStop(1,   'rgba(90, 106, 122, 0.08)');
+  }
+
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, zeroY);
+  points.forEach(p => ctx.lineTo(p.x, p.y));
+  ctx.lineTo(points[points.length - 1].x, zeroY);
+  ctx.closePath();
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Curve line
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    // Smooth with quadratic curves
+    const mx = (points[i-1].x + points[i].x) / 2;
+    const my = (points[i-1].y + points[i].y) / 2;
+    ctx.quadraticCurveTo(points[i-1].x, points[i-1].y, mx, my);
+  }
+  ctx.lineTo(points[points.length-1].x, points[points.length-1].y);
+  ctx.strokeStyle = eqEnabled ? '#00e5ff' : '#3a4a5a';
+  ctx.lineWidth = eqEnabled ? 1.5 : 1;
+  ctx.stroke();
+
+  // ── Individual band markers ───────────────────────────────────────
+  if (eqEnabled) {
+    eqBands.forEach(band => {
+      if (!band.enabled || band.gain === 0) return;
+      const x = fToX(band.freq);
+      const y = dbToY(Math.max(-DB_MAX, Math.min(DB_MAX, band.gain)));
+      // Vertical dotted guide line from zero to peak
+      ctx.setLineDash([2, 3]);
+      ctx.strokeStyle = 'rgba(0, 229, 255, 0.3)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(x, zeroY);
+      ctx.lineTo(x, y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // Dot at the band's peak gain
+      ctx.beginPath();
+      ctx.arc(x, y, 3, 0, Math.PI * 2);
+      ctx.fillStyle = '#00e5ff';
+      ctx.fill();
+      // Gain label next to the dot
+      const label = (band.gain > 0 ? '+' : '') + band.gain.toFixed(1);
+      ctx.fillStyle = '#00e5ff';
+      ctx.font = 'bold 9px Share Tech Mono, monospace';
+      ctx.textAlign = band.freq > 10000 ? 'right' : 'left';
+      ctx.fillText(label, x + (band.freq > 10000 ? -6 : 6), y - 4);
+    });
+  }
+}
+
 // ── EQ Modal ─────────────────────────────────────────────────────────
 
 function openEqModal() {
@@ -1044,29 +1294,36 @@ function openEqModal() {
   $('eq-enabled-chk').checked = eqEnabled;
   $('modal-eq').style.display = 'flex';
   $('modal-overlay').style.display = 'flex';
+  renderEqCurve(); // ← ADD
 }
 
 function toggleEqEnabled(val) {
   eqEnabled = val;
   replot(); // instantly update preview
+  playerUpdateEqStatus(); // ← ADD THIS
+  playerApplyEqLive();    // ← ADD THIS (rebuilds filter chain if playing)
+  renderEqCurve(); // ← ADD
 }
 
 function addEqBand() {
   eqBands.push({ type: 'peaking', freq: 1000, gain: 0, q: 1.0, enabled: true });
   renderEqBands();
   replot();
+  renderEqCurve(); // ← ADD
 }
 
 function removeEqBand(i) {
   eqBands.splice(i, 1);
   renderEqBands();
   replot();
+  renderEqCurve(); // ← ADD
 }
 
 function resetEq() {
   eqBands.forEach(b => { b.gain = 0; });
   renderEqBands();
   replot();
+  renderEqCurve(); // ← ADD
 }
 
 function renderEqBands() {
@@ -1090,22 +1347,22 @@ function renderEqBands() {
       border-radius:3px; padding:6px 4px; font-family:var(--mono); font-size:11px;">
       <div style="display:flex;align-items:center;justify-content:center;">
         <input type="checkbox" ${b.enabled ? 'checked' : ''}
-          onchange="eqBands[${i}].enabled=this.checked; replot();"
+          onchange="eqBands[${i}].enabled=this.checked; replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
           style="cursor:pointer;accent-color:var(--accent);">
       </div>
-      <select onchange="eqBands[${i}].type=this.value; renderEqBands(); replot();"
+      <select onchange="eqBands[${i}].type=this.value; renderEqBands(); replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
         style="background:var(--surface);font-size:10px;padding:2px 4px;">${typeOpts}</select>
-      <select onchange="eqBands[${i}].freq=parseFloat(this.value); replot();"
+      <select onchange="eqBands[${i}].freq=parseFloat(this.value); replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
         style="background:var(--surface);font-size:10px;padding:2px 4px;">${freqOpts}</select>
       <div style="display:flex;flex-direction:column;gap:1px;">
         <input type="range" min="-12" max="12" step="0.5" value="${b.gain}"
-          oninput="eqBands[${i}].gain=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'dB'; replot();"
+          oninput="eqBands[${i}].gain=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'dB'; replot(); playerApplyEqLive(); playerUpdateEqStatus(); renderEqCurve();"
           style="width:100%;accent-color:var(--accent);">
         <div style="text-align:center;font-size:9px;color:var(--accent);">${b.gain.toFixed(1)}dB</div>
       </div>
       <div style="display:flex;flex-direction:column;gap:1px;">
         <input type="range" min="0.3" max="4" step="0.1" value="${b.q}" ${qDisabled}
-          oninput="eqBands[${i}].q=parseFloat(this.value); this.nextElementSibling.textContent='Q'+parseFloat(this.value).toFixed(1); replot();"
+          oninput="eqBands[${i}].q=parseFloat(this.value); this.nextElementSibling.textContent='Q'+parseFloat(this.value).toFixed(1); replot(); playerApplyEqLive(); playerUpdateEqStatus(); renderEqCurve();"
           style="width:100%;accent-color:var(--accent);">
         <div style="text-align:center;font-size:9px;color:var(--text-dim);">Q${b.q.toFixed(1)}</div>
       </div>
@@ -1132,6 +1389,254 @@ function measureWithEq() {
     .join(' ');
   nameInput.value = 'EQ: ' + eqSummary;
   startRecording();
+}
+
+// ── Music Player ─────────────────────────────────────────────────────
+
+function openPlayerModal() {
+  hideAllModals();
+  playerUpdateEqStatus();
+  $('modal-player').style.display = 'flex';
+  $('modal-overlay').style.display = 'flex';
+}
+
+function playerUpdateEqStatus() {
+  const el = $('player-eq-status');
+  if (!el) return;
+  if (eqEnabled && eqBands.some(b => b.enabled && b.gain !== 0)) {
+    const summary = eqBands
+      .filter(b => b.enabled && b.gain !== 0)
+      .map(b => (b.freq >= 1000 ? (b.freq/1000)+'k' : b.freq)
+               + (b.gain > 0 ? '+' : '') + b.gain.toFixed(0))
+      .join('  ');
+    el.textContent = 'EQ: ON — ' + summary;
+    el.style.color = 'var(--accent)';
+    el.style.borderLeft = '2px solid var(--accent)';
+  } else {
+    el.textContent = 'EQ: OFF — enable in EQ / PREVIEW to hear effect';
+    el.style.color = 'var(--text-dim)';
+    el.style.borderLeft = 'none';
+  }
+}
+
+async function playerLoadFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  // Stop any current playback cleanly
+  playerStop();
+
+  $('player-filename').textContent = 'Decoding ' + file.name + '...';
+  $('player-filename').style.color = 'var(--text-dim)';
+
+  try {
+    // Ensure playerCtx exists and is running
+    if (!playerCtx || playerCtx.state === 'closed') {
+      playerCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+    }
+    if (playerCtx.state === 'suspended') {
+      await playerCtx.resume();
+    }
+
+    const arrayBuffer = await file.arrayBuffer();
+    playerBuffer = await playerCtx.decodeAudioData(arrayBuffer);
+    playerFileName = file.name;
+    playerOffset = 0;
+
+    // Update UI
+    $('player-filename').textContent = file.name;
+    $('player-filename').style.color = 'var(--text)';
+    $('player-time-dur').textContent = playerFormatTime(playerBuffer.duration);
+    $('player-time-cur').textContent = '0:00';
+    $('player-progress-bar').style.width = '0%';
+    $('btn-player-play').disabled = false;
+    $('btn-player-stop').disabled = false;
+
+    setStatus('ready', 'Loaded: ' + file.name);
+  } catch (err) {
+    $('player-filename').textContent = 'Failed to decode: ' + err.message;
+    $('player-filename').style.color = 'var(--red)';
+    console.error('Player decode error:', err);
+  }
+}
+
+function playerBuildFilterChain() {
+  // Returns the first node to connect to, and the last node to connect to destination
+  // If EQ is off or no active bands, returns null (caller connects directly to gain)
+  if (!eqEnabled || !eqBands.some(b => b.enabled && b.gain !== 0)) {
+    playerFilters = [];
+    return null;
+  }
+  const activeBands = eqBands.filter(b => b.enabled && b.gain !== 0);
+  playerFilters = activeBands.map(band => {
+    const f = playerCtx.createBiquadFilter();
+    f.type = band.type.toLowerCase(); // ← lowercase for Web Audio API
+    f.frequency.value = band.freq;
+    f.gain.value = band.gain;
+    f.Q.value = band.q;
+    return f;
+  });
+  // Chain the filters together
+  for (let i = 0; i < playerFilters.length - 1; i++) {
+    playerFilters[i].connect(playerFilters[i + 1]);
+  }
+  return playerFilters; // first = input, last = output
+}
+
+function playerCreateAndStart(offset) {
+  if (!playerBuffer || !playerCtx) return;
+
+  // Create gain node (master volume)
+  playerGain = playerCtx.createGain();
+  playerGain.gain.value = parseFloat($('player-vol').value);
+  playerGain.connect(playerCtx.destination);
+
+  // Build EQ chain and connect
+  const filters = playerBuildFilterChain();
+  playerSource = playerCtx.createBufferSource();
+  playerSource.buffer = playerBuffer;
+
+  if (filters && filters.length > 0) {
+    playerSource.connect(filters[0]);
+    filters[filters.length - 1].connect(playerGain);
+  } else {
+    playerSource.connect(playerGain);
+  }
+
+  // When track ends naturally, update UI
+  playerSource.onended = () => {
+    if (playerIsPlaying) {
+      playerIsPlaying = false;
+      playerOffset = 0;
+      $('btn-player-play').textContent = '▶';
+      $('btn-player-play').style.color = '';
+      $('player-progress-bar').style.width = '0%';
+      $('player-time-cur').textContent = '0:00';
+      if (playerProgressTimer) {
+        clearInterval(playerProgressTimer);
+        playerProgressTimer = null;
+      }
+    }
+  };
+
+  playerSource.start(0, offset);
+  playerStartTime = playerCtx.currentTime - offset;
+  playerIsPlaying = true;
+}
+
+let playerProgressTimer = null;
+
+async function playerTogglePlay() {
+  if (!playerBuffer) return;
+
+  // iOS/Android: AudioContext may be suspended until a user gesture
+  if (!playerCtx || playerCtx.state === 'closed') {
+    playerCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
+  }
+  if (playerCtx.state === 'suspended') {
+    await playerCtx.resume();
+  }
+
+  if (playerIsPlaying) {
+    // PAUSE: record position and stop source
+    playerOffset = playerCtx.currentTime - playerStartTime;
+    playerSource.onended = null; // prevent onended firing as a natural end
+    playerSource.stop();
+    playerIsPlaying = false;
+    $('btn-player-play').textContent = '▶';
+    $('btn-player-play').style.color = '';
+    if (playerProgressTimer) {
+      clearInterval(playerProgressTimer);
+      playerProgressTimer = null;
+    }
+  } else {
+    // PLAY: start from current offset
+    playerCreateAndStart(playerOffset);
+    $('btn-player-play').textContent = '⏸';
+    $('btn-player-play').style.color = 'var(--accent)';
+    // Start progress timer
+    playerProgressTimer = setInterval(playerUpdateProgress, 250);
+  }
+}
+
+function playerStop() {
+  if (playerSource) {
+    playerSource.onended = null;
+    try { playerSource.stop(); } catch(e) {}
+    playerSource = null;
+  }
+  playerIsPlaying = false;
+  playerOffset = 0;
+  if (playerProgressTimer) {
+    clearInterval(playerProgressTimer);
+    playerProgressTimer = null;
+  }
+  const playBtn = $('btn-player-play');
+  if (playBtn) playBtn.textContent = '▶';
+  if (playBtn) playBtn.style.color = '';
+  $('player-progress-bar').style.width = '0%';
+  $('player-time-cur').textContent = '0:00';
+}
+
+function playerUpdateProgress() {
+  if (!playerIsPlaying || !playerBuffer || !playerCtx) return;
+  const elapsed = playerCtx.currentTime - playerStartTime;
+  const duration = playerBuffer.duration;
+  const pct = Math.min((elapsed / duration) * 100, 100);
+  $('player-progress-bar').style.width = pct + '%';
+  $('player-time-cur').textContent = playerFormatTime(Math.min(elapsed, duration));
+}
+
+function playerSeek(event) {
+  if (!playerBuffer) return;
+  const bar = $('player-progress-container');
+  const rect = bar.getBoundingClientRect();
+  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const newOffset = fraction * playerBuffer.duration;
+
+  const wasPlaying = playerIsPlaying;
+  if (playerIsPlaying) {
+    playerSource.onended = null;
+    playerSource.stop();
+    playerIsPlaying = false;
+  }
+  playerOffset = newOffset;
+  $('player-progress-bar').style.width = (fraction * 100) + '%';
+  $('player-time-cur').textContent = playerFormatTime(newOffset);
+
+  if (wasPlaying) {
+    playerCreateAndStart(playerOffset);
+    $('btn-player-play').textContent = '⏸';
+    $('btn-player-play').style.color = 'var(--accent)';
+    if (!playerProgressTimer) {
+      playerProgressTimer = setInterval(playerUpdateProgress, 250);
+    }
+  }
+}
+
+function playerSetVolume(val) {
+  if (playerGain) playerGain.gain.value = parseFloat(val);
+  $('player-vol-disp').textContent = Math.round(val * 100) + '%';
+}
+
+function playerApplyEqLive() {
+  // Called when EQ settings change while music is playing.
+  // Rebuilds the filter chain by restarting playback from current position.
+  if (!playerIsPlaying) return;
+  const currentOffset = playerCtx.currentTime - playerStartTime;
+  playerSource.onended = null;
+  playerSource.stop();
+  playerIsPlaying = false;
+  playerOffset = currentOffset;
+  playerCreateAndStart(playerOffset);
+  $('btn-player-play').textContent = '⏸';
+  $('btn-player-play').style.color = 'var(--accent)';
+}
+
+function playerFormatTime(secs) {
+  const s = Math.floor(secs);
+  return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
 }
 
 function replot() {
@@ -1226,6 +1731,7 @@ function replot() {
 // ───────────────────────────────────────────────────────────────────
 async function startRecording() {
   if (isMeasuring) return;
+  playerStop(); // ← ADD THIS — stop music before closing audioCtx
   isMeasuring = true;
   btnRecord.disabled = true; btnAnalyze.disabled = true;
   btnSave.disabled = true; btnExport.disabled = true;
@@ -1428,7 +1934,6 @@ async function runAnalysis() {
           URL.revokeObjectURL(url); // <-- CLEANUP ADDED HERE
           reject(new Error('Worker: ' + e.message)); 
       };
-// ... rest of the worker code remains the same
 
       const refBuf = capturedRef.buffer.slice(0);
       const recBuf = capturedRec.buffer.slice(0);
@@ -1981,7 +2486,7 @@ function updateSubName() {
 }
 
 function hideAllModals() {
-  ['modal-scale', 'modal-sub', 'modal-overlays', 'modal-edit', 'modal-eq']
+  ['modal-scale', 'modal-sub', 'modal-overlays', 'modal-edit', 'modal-eq', 'modal-player']
     .forEach(id => {
       const el = $(id);
       if (el) el.style.display = 'none';
@@ -2169,6 +2674,7 @@ $('btn-overlays').addEventListener('click', openOverlays);
 $('btn-save-overlays').addEventListener('click', saveOverlays);
 
 $('btn-eq').addEventListener('click', openEqModal);
+$('btn-player').addEventListener('click', openPlayerModal);
 
 function initIrPlot() {
   Plotly.newPlot('ir-plot', [], makeIrPlotLayout(), { displayModeBar:false, responsive:true });
