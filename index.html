@@ -52,8 +52,6 @@
   .toolbar .slider-popover { bottom: auto; top: 100%; } /* Top toolbar drops down, bottom toolbar pops up */
   .param-container:focus-within .slider-popover { display: block; }
 
-  #player-progress-container:hover { background: var(--border); filter: brightness(1.5); }
-  
   /* Ovelay table */
   .ov-row {
   display: grid;
@@ -1445,7 +1443,6 @@ async function playerLoadFile(event) {
     $('player-filename').style.color = 'var(--text)';
     $('player-time-dur').textContent = playerFormatTime(playerBuffer.duration);
     $('player-time-cur').textContent = '0:00';
-    $('player-seek-slider').value = 0;
     $('btn-player-play').disabled = false;
     $('btn-player-stop').disabled = false;
 	$('player-seek-slider').disabled = false;  // ← ADD
@@ -1581,7 +1578,6 @@ function playerUpdateProgress() {
   if (!playerIsPlaying || !playerBuffer || !playerCtx) return;
   const elapsed = playerCtx.currentTime - playerStartTime;
   const duration = playerBuffer.duration;
-  const pct = Math.min((elapsed / duration) * 100, 100);
   $('player-time-cur').textContent = playerFormatTime(Math.min(elapsed, duration));
   $('player-seek-slider').value = Math.round((elapsed / duration) * 1000);
 }
