@@ -444,22 +444,19 @@
       text-align:center; min-height:14px;">No file loaded</div>
   </div>
 
-  <!-- Progress bar -->
-  <div id="player-progress-container"
-    style="height:4px; background:var(--border); border-radius:2px;
-    overflow:hidden; cursor:pointer;" onclick="playerSeek(event)">
-    <div id="player-progress-bar"
-      style="height:100%; width:0%; background:var(--accent);
-      border-radius:2px; transition:width 0.25s linear; pointer-events:none;">
-    </div>
-  </div>
-
-  <!-- Time display -->
+<!-- Seek slider + time display combined -->
+<div style="display:flex; flex-direction:column; gap:4px;">
+  <input type="range" id="player-seek-slider"
+    min="0" max="1000" step="1" value="0" disabled
+    oninput="playerSeekSliderInput(this.value)"
+    onchange="playerSeekSliderCommit(this.value)"
+    style="width:100%; accent-color:var(--accent); cursor:pointer; height:18px;">
   <div style="display:flex; justify-content:space-between;
     font-family:var(--mono); font-size:10px; color:var(--text-dim);">
     <span id="player-time-cur">0:00</span>
     <span id="player-time-dur">0:00</span>
   </div>
+</div>
 
   <!-- Transport controls -->
   <div style="display:flex; gap:8px; justify-content:center;">
@@ -1333,10 +1330,6 @@ function renderEqBands() {
     return;
   }
   body.innerHTML = eqBands.map((b, i) => {
-    const freqOpts = [20,30,40,50,60,80,100,120,150,200,250,300,400,500,600,800,
-      1000,1200,1500,2000,2500,3000,4000,5000,6000,8000,10000,12000,15000,16000,20000]
-      .map(f => '<option value="' + f + '"' + (b.freq === f ? ' selected' : '') + '>' 
-        + (f >= 1000 ? (f/1000) + 'k' : f) + '</option>').join('');
     const typeOpts = ['peaking','lowShelf','highShelf']
       .map(t => '<option value="' + t + '"' + (b.type === t ? ' selected' : '') + '>'
         + (t === 'peaking' ? 'Peak' : t === 'lowShelf' ? 'Lo Shelf' : 'Hi Shelf') + '</option>').join('');
@@ -1352,8 +1345,11 @@ function renderEqBands() {
       </div>
       <select onchange="eqBands[${i}].type=this.value; renderEqBands(); replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
         style="background:var(--surface);font-size:10px;padding:2px 4px;">${typeOpts}</select>
-      <select onchange="eqBands[${i}].freq=parseFloat(this.value); replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
-        style="background:var(--surface);font-size:10px;padding:2px 4px;">${freqOpts}</select>
+      <input type="number" min="20" max="20000" step="1" value="${b.freq}"
+        onchange="const v=Math.max(20,Math.min(20000,parseInt(this.value)||b.freq)); eqBands[${i}].freq=v; this.value=v; replot(); renderEqCurve(); playerApplyEqLive(); playerUpdateEqStatus();"
+        style="background:var(--surface);border:1px solid var(--border);color:var(--text);
+        font-family:var(--mono);font-size:10px;padding:2px 4px;width:100%;border-radius:3px;
+        text-align:center;outline:none;" title="Frequency in Hz (20–20000)">
       <div style="display:flex;flex-direction:column;gap:1px;">
         <input type="range" min="-12" max="12" step="0.5" value="${b.gain}"
           oninput="eqBands[${i}].gain=parseFloat(this.value); this.nextElementSibling.textContent=parseFloat(this.value).toFixed(1)+'dB'; replot(); playerApplyEqLive(); playerUpdateEqStatus(); renderEqCurve();"
@@ -1449,9 +1445,11 @@ async function playerLoadFile(event) {
     $('player-filename').style.color = 'var(--text)';
     $('player-time-dur').textContent = playerFormatTime(playerBuffer.duration);
     $('player-time-cur').textContent = '0:00';
-    $('player-progress-bar').style.width = '0%';
+    $('player-seek-slider').value = 0;
     $('btn-player-play').disabled = false;
     $('btn-player-stop').disabled = false;
+	$('player-seek-slider').disabled = false;  // ← ADD
+    $('player-seek-slider').value = 0;          // ← ADD (reset position)
 
     setStatus('ready', 'Loaded: ' + file.name);
   } catch (err) {
@@ -1584,15 +1582,22 @@ function playerUpdateProgress() {
   const elapsed = playerCtx.currentTime - playerStartTime;
   const duration = playerBuffer.duration;
   const pct = Math.min((elapsed / duration) * 100, 100);
-  $('player-progress-bar').style.width = pct + '%';
   $('player-time-cur').textContent = playerFormatTime(Math.min(elapsed, duration));
+  $('player-seek-slider').value = Math.round((elapsed / duration) * 1000);
 }
 
-function playerSeek(event) {
+function playerSeekSliderInput(val) {
+  // Called continuously while dragging — updates timestamp display only, no audio seek yet
   if (!playerBuffer) return;
-  const bar = $('player-progress-container');
-  const rect = bar.getBoundingClientRect();
-  const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const fraction = parseInt(val) / 1000;
+  const newOffset = fraction * playerBuffer.duration;
+  $('player-time-cur').textContent = playerFormatTime(newOffset);
+}
+
+function playerSeekSliderCommit(val) {
+  // Called on release — actually seeks the audio
+  if (!playerBuffer) return;
+  const fraction = parseInt(val) / 1000;
   const newOffset = fraction * playerBuffer.duration;
 
   const wasPlaying = playerIsPlaying;
@@ -1602,7 +1607,6 @@ function playerSeek(event) {
     playerIsPlaying = false;
   }
   playerOffset = newOffset;
-  $('player-progress-bar').style.width = (fraction * 100) + '%';
   $('player-time-cur').textContent = playerFormatTime(newOffset);
 
   if (wasPlaying) {
