@@ -1731,7 +1731,11 @@ function replot() {
 // ───────────────────────────────────────────────────────────────────
 async function startRecording() {
   if (isMeasuring) return;
-  playerStop(); // ← ADD THIS — stop music before closing audioCtx
+  try {
+    playerStop();
+  } catch (e) {
+    console.warn("playerStop error ignored:", e);
+  }
   isMeasuring = true;
   btnRecord.disabled = true; btnAnalyze.disabled = true;
   btnSave.disabled = true; btnExport.disabled = true;
@@ -1746,7 +1750,6 @@ async function startRecording() {
     const selectedOutput = outDeviceSel.value;
     // Always initialize the context at 48kHz first
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    await audioCtx.resume();
 	  
     // Explicitly set the routing AFTER creation (The correct browser API pattern)
     if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
@@ -1756,7 +1759,7 @@ async function startRecording() {
         console.warn('setSinkId failed, using default output:', e.message); 
       }
     }
-    
+    await audioCtx.resume();
     capturedSR = audioCtx.sampleRate;
     $('meta-sr').textContent = (capturedSR/1000).toFixed(1) + ' kHz';
 
@@ -1827,6 +1830,8 @@ async function startRecording() {
     // ── Insert EQ filter chain if enabled ───────────────────────────
     if (eqEnabled && eqBands.some(b => b.enabled && b.gain !== 0)) {
       const activeBands = eqBands.filter(b => b.enabled && b.gain !== 0);
+      console.log("🎛️ MEASUREMENT EQ ACTIVE — Bands:", activeBands.length);
+      console.log("Details:", activeBands.map(b => `${b.type} ${b.freq}Hz ${b.gain}dB Q${b.q}`).join(", "));
       // Build chain: src -> filter[0] -> filter[1] -> ... -> gain
       let prevNode = src;
       activeBands.forEach(band => {
