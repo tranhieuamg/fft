@@ -1746,13 +1746,14 @@ async function startRecording() {
     const selectedOutput = outDeviceSel.value;
     // Always initialize the context at 48kHz first
     audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000 });
-    
+    await audioCtx.resume();
+	  
     // Explicitly set the routing AFTER creation (The correct browser API pattern)
     if (selectedOutput && typeof audioCtx.setSinkId === 'function') {
       try { 
         await audioCtx.setSinkId(selectedOutput); 
       } catch (e) { 
-        throw new Error('Could not route to selected output. Set it as your system default. ' + e.message); 
+        console.warn('setSinkId failed, using default output:', e.message); 
       }
     }
     
