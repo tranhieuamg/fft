@@ -1506,7 +1506,7 @@ function playerCreateAndStart(offset) {
       playerOffset = 0;
       $('btn-player-play').textContent = '▶';
       $('btn-player-play').style.color = '';
-      $('player-progress-bar').style.width = '0%';
+      $('player-seek-slider').value = 0;
       $('player-time-cur').textContent = '0:00';
       if (playerProgressTimer) {
         clearInterval(playerProgressTimer);
@@ -1570,7 +1570,7 @@ function playerStop() {
   const playBtn = $('btn-player-play');
   if (playBtn) playBtn.textContent = '▶';
   if (playBtn) playBtn.style.color = '';
-  $('player-progress-bar').style.width = '0%';
+  $('player-seek-slider').value = 0;
   $('player-time-cur').textContent = '0:00';
 }
 
